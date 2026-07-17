@@ -1,0 +1,21 @@
+add_executable(
+    hdors_tests
+    test_cholesky.cpp
+)
+
+target_link_libraries(
+    hdors_tests
+    PRIVATE
+        hdors::hdors
+        GTest::gtest_main
+)
+
+target_include_directories(
+    hdors_tests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+
+include(GoogleTest)
+
+gtest_discover_tests(hdors_tests)

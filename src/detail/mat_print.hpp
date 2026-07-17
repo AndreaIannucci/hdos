@@ -3,5 +3,5 @@
 #include <vector>
 
 namespace hdos::detail{
-double stable_norm(const std::vector<double>& x);
+    void mat_print(const std::vector<double>& L);
 }

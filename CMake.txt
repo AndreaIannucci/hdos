@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 project(HDORS LANGUAGES CXX)
 
 add_library(
-    HDORS
+    hdos
     src/cholesky.cpp
     src/matrix_invert.cpp
     src/stable_norm.cpp
@@ -11,13 +11,13 @@ add_library(
 )
 
 target_compile_features(
-    HDORS
+    hdos
     PUBLIC
         cxx_std_20
 )
 
 target_include_directories(
-    HDORS
+    hdos`
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE

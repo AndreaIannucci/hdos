@@ -1,17 +1,20 @@
+#include "detail/stable_norm.hpp"
+
 #include <vector>
 #include <cmath>
 
 using namespace std;
 
 
+namespace hdos::detail{
 // TODO infinite or nan elements
-double stable_norm(const vector<double>& x){
+double stable_norm(const std::vector<double>& x){
     double scale = 0.0;
     double ssq = 1.0;
 
     for (double xi: x){
         if (xi != 0){
-            double a = abs(xi);
+            double a = std::abs(xi);
             if (a > scale){
                 ssq = 1 + ssq*(scale / a)* (scale / a);
                 scale = a;
@@ -21,5 +24,6 @@ double stable_norm(const vector<double>& x){
             }
         }
     }
-    return scale * sqrt(ssq);
+    return scale * std::sqrt(ssq);
+}
 }
