@@ -19,44 +19,47 @@ std::vector<double> cholesky_decomp(const std::vector<double>& M)
     const std::size_t N =
         static_cast<std::size_t>(std::sqrt(M.size()));
 
-    std::vector<double> L(M.size());
+    if (N * N != M.size()) {
+        throw std::invalid_argument("The matrix must be square");
+    }
 
-    for (std::size_t k = 0; k < N; ++k) {
-        for (std::size_t j = 0; j <= k; ++j) {
-            double sum = 0.0;
+    std::vector<double> L = M;
 
-            for (std::size_t i = 0; i < j; ++i) {
-                sum += L[k + i * N] * L[j + i * N];
+    for (std::size_t j = 0; j < N; ++j) {
+        const double diagonal = L[j + j * N];
+
+        if (diagonal <= 0.0) {
+            throw std::invalid_argument(
+                "The matrix is not positive definite"
+            );
+        }
+
+        L[j + j * N] = std::sqrt(diagonal);
+
+        // Scale the part below the diagonal: contiguous access.
+        for (std::size_t i = j + 1; i < N; ++i) {
+            L[i + j * N] /= L[j + j * N];
+        }
+
+        // Update the trailing lower-triangular matrix.
+        for (std::size_t k = j + 1; k < N; ++k) {
+            const double factor = L[k + j * N];
+
+            for (std::size_t i = k; i < N; ++i) {
+                L[i + k * N] -= L[i + j * N] * factor;
             }
+        }
+    }
 
-            if (k == j) {
-                const double addend = M[k + N * k] - sum;
-
-                if (addend < 0.0) {
-                    throw std::invalid_argument(
-                        "The matrix is not positive definite"
-                    );
-                }
-
-                L[k + N * j] = std::sqrt(addend);
-            } else {
-                const double denom = L[j + N * j];
-
-                if (denom == 0.0) {
-                    throw std::invalid_argument(
-                        "The matrix is not positive definite"
-                    );
-                }
-
-                L[k + N * j] =
-                    (M[k + j * N] - sum) / denom;
-            }
+    // Clear the unused upper triangle.
+    for (std::size_t j = 1; j < N; ++j) {
+        for (std::size_t i = 0; i < j; ++i) {
+            L[i + j * N] = 0.0;
         }
     }
 
     return L;
 }
-
 
 void rk1_cholesky(
     std::vector<double>& L,
