@@ -25,11 +25,8 @@ std::vector<double> solve_pos_definite_cholesky(
     const std::vector<double> y =
         lower_triangular_solver(L, b);
 
-    const std::vector<double> L_adj =
-        transpose(L, N, N);
-
     const std::vector<double> x =
-        upper_triangular_solver(L_adj, y);
+        lower_transpose_solver(L, y);
 
     return x;
 }
