@@ -31,7 +31,6 @@ std::vector<double> solve_pos_definite_cholesky(
     return x;
 }
 
-
 // Invert from an existing Cholesky decomposition
 std::vector<double> invert_pos_def_cholesky(
     const std::vector<double>& L

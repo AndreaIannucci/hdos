@@ -1,21 +1,22 @@
 add_executable(
-    hdors_tests
+    hdos_tests
     test_cholesky.cpp
+    test_triangular_solver.cpp
 )
 
 target_link_libraries(
-    hdors_tests
+    hdos_tests
     PRIVATE
-        hdors::hdors
+        hdos
         GTest::gtest_main
 )
 
+# Allows tests to include private detail headers.
 target_include_directories(
-    hdors_tests
+    hdos_tests
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src
 )
 
 include(GoogleTest)
-
-gtest_discover_tests(hdors_tests)
+gtest_discover_tests(hdos_tests)
