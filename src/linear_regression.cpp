@@ -1,5 +1,8 @@
 #include "hdos/linear_regression.hpp"
 #include "detail/cholesky.hpp"
+#include "detail/matrix_invert.hpp"
+
+#include <utility>
 
 namespace hdos {
     LinearRegression::LinearRegression(
@@ -21,6 +24,8 @@ namespace hdos {
     if (X.size() != n_samples * n_features_) {
         throw std::invalid_argument("Incompatible dimensions");
     }
+
+    solution_is_current_ = false;
 
     const std::size_t n_coeff =
         n_features_ + (options_.fit_intercept ? 1 : 0);
@@ -87,4 +92,41 @@ namespace hdos {
     root_variance_ = detail::cholesky_decomp(gram_matrix);
     n_observations_ = n_samples;
 };
+
+void LinearRegression::solve_if_needed()
+{
+    if (solution_is_current_) {
+        return;
+    }
+
+    if (n_observations_ == 0) {
+        throw std::logic_error("The model has not been fitted");
+    }
+
+    std::vector<double> solution =
+        detail::solve_pos_definite_cholesky(
+            root_variance_,
+            normal_equation_rhs_
+        );
+
+    if (options_.fit_intercept) {
+        intercept_ = solution.back();
+        solution.pop_back();
+    } else {
+        intercept_ = 0.0;
+    }
+
+    coefficients_ = std::move(solution);
+    solution_is_current_ = true;
+}
+
+const std::vector<double>& LinearRegression::coefficients(){
+    solve_if_needed();
+    return coefficients_;
+}
+
+double LinearRegression::intercept(){
+    solve_if_needed();
+    return intercept_;
+}
 }

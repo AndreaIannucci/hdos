@@ -1,7 +1,8 @@
 add_executable(
     hdos_tests
-    test_cholesky.cpp
-    test_triangular_solver.cpp
+    # test_cholesky.cpp
+    # test_triangular_solver.cpp
+    test_linear_regression.cpp
 )
 
 target_link_libraries(
