@@ -1,9 +1,11 @@
 
 #pragma once
 
+#include <span>
 #include <vector>
 
 namespace hdos::detail{
-std::vector<double> cholesky_decomp(const std::vector<double>& M);
-void rk1_cholesky(std::vector<double>& L, std::vector<double> x);
+std::vector<double> cholesky_decomp(std::span<const double> M);
+void rk1_cholesky(std::vector<double>& L, std::span<const double> x,  double c = 1,
+     const bool intercept = false);
 }
