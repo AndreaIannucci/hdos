@@ -14,7 +14,13 @@ namespace hdos {
     std::span<const double> X,
     std::span<const double> y
 )
-{
+{   
+    /////////////////////////////
+    //TODO ---
+    // Ridge Regression
+    // What if we don't initialise via fit
+    //////////////////////////////
+
     const std::size_t n_samples = y.size();
 
     if (n_samples == 0) {
@@ -120,6 +126,71 @@ void LinearRegression::solve_if_needed()
     solution_is_current_ = true;
 }
 
+
+
+void LinearRegression::rk1_update(
+    std::span<const double> x,
+    const double y)
+{
+    if (x.size() != n_features_) {
+        throw std::invalid_argument(
+            "Incompatible dimensions");
+    }
+
+    detail::rk1_cholesky(
+        root_variance_,
+        x,
+        1.0,
+        options_.fit_intercept
+    );
+
+    // Update X^T y.
+    for (std::size_t j = 0; j < n_features_; ++j) {
+        normal_equation_rhs_[j] += x[j] * y;
+    }
+
+    // The intercept is the final system coordinate.
+    if (options_.fit_intercept) {
+        normal_equation_rhs_[n_features_] += y;
+    }
+
+    // Update y^T y.
+    sum_of_squares_ += y * y;
+
+    ++n_observations_;
+    solution_is_current_ = false;
+}
+
+void LinearRegression::batch_update(
+    std::span<const double> X,
+    std::span<const double> y)
+{
+    const std::size_t n_samples = y.size();
+
+    if (n_samples == 0) {
+        throw std::invalid_argument(
+            "The response cannot be empty");
+    }
+
+    if (X.size() != n_samples * n_features_) {
+        throw std::invalid_argument(
+            "Incompatible dimensions");
+    }
+
+    // Allocated only once for the entire batch.
+    std::vector<double> observation(n_features_);
+
+    for (std::size_t k = 0; k < n_samples; ++k) {
+        for (std::size_t j = 0; j < n_features_; ++j) {
+            // Row k, column j in column-major storage.
+            observation[j] = X[k + j * n_samples];
+        }
+
+        rk1_update(observation, y[k]);
+    }
+}
+
+
 const std::vector<double>& LinearRegression::coefficients(){
     solve_if_needed();
     return coefficients_;
@@ -128,5 +199,24 @@ const std::vector<double>& LinearRegression::coefficients(){
 double LinearRegression::intercept(){
     solve_if_needed();
     return intercept_;
+}
+
+std::size_t LinearRegression::n_observations() const noexcept{
+    return n_observations_;
+}
+
+void LinearRegression::reset(){
+    n_observations_ = 0.0;
+    
+    for (std::size_t k = 0; k < n_features_; ++k){
+        normal_equation_rhs_ = 0.0;
+        coefficients_ = 0.0;
+        for (std::size_t j = 0; j < n_features_; ++j){
+            root_variance_[k*n_features_ + j] = 0.0; 
+        }
+    }
+    sum_of_squares_  = 0.0;
+    intercept_ = 0.0;
+    solution_is_current_ = false;
 }
 }

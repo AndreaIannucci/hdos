@@ -28,9 +28,14 @@ class LinearRegression{
 
     // Create design matrix, create covariance matrix and X^t y
 
-    void update(
+    void rk1_update(
         std::span<const double> x,
         double y
+    );
+
+    void batch_update(
+        std::span<const double> X,
+        std::span<const double> y
     );
 
     double predict(std::span<const double> x);
@@ -48,7 +53,6 @@ class LinearRegression{
     void solve_if_needed();
 
     std::size_t n_features_;
-    std::size_t system_dimension_;
     std::size_t n_observations_ = 0;
 
     LinearRegressionOptions options_;
