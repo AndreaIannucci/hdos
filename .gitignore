@@ -1,3 +1,7 @@
 /build*/
 /cmake-build-*/
 command.txt
+debug_cholesky.cpp
+settings.json
+
+*.exe
