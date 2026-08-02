@@ -4,6 +4,9 @@
 
 #include <utility>
 
+
+// Test for nan and infty
+
 namespace hdos {
     LinearRegression::LinearRegression(
         std::size_t n_features,
