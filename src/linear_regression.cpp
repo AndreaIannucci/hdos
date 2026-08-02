@@ -15,11 +15,6 @@ namespace hdos {
     std::span<const double> y
 )
 {   
-    /////////////////////////////
-    //TODO ---
-    // Ridge Regression
-    // What if we don't initialise via fit
-    //////////////////////////////
 
     const std::size_t n_samples = y.size();
 
@@ -94,7 +89,10 @@ namespace hdos {
 
         normal_equation_rhs_[intercept] = response_sum;
     }
-
+    
+    for (std::size_t j = 0; j < n_features_; ++j) {
+        gram_matrix[j + j * n_coeff] += options_.l2_penalty;
+    }
     root_variance_ = detail::cholesky_decomp(gram_matrix);
     n_observations_ = n_samples;
 };
@@ -190,6 +188,19 @@ void LinearRegression::batch_update(
     }
 }
 
+double LinearRegression::predict(std::span<const double> x){
+    
+    if (x.size() != n_features_){
+        throw std::invalid_argument("Incompatible dimension");
+    }
+
+    double out = intercept_;
+    for (std::size_t k=0; k <  n_features_; ++k){
+        out += x[k] * coefficients_[k];
+    }
+
+    return  out;
+}
 
 const std::vector<double>& LinearRegression::coefficients(){
     solve_if_needed();
@@ -201,21 +212,35 @@ double LinearRegression::intercept(){
     return intercept_;
 }
 
+std::size_t LinearRegression::n_features() const noexcept{
+    return n_features_;
+}
+
 std::size_t LinearRegression::n_observations() const noexcept{
     return n_observations_;
 }
 
-void LinearRegression::reset(){
-    n_observations_ = 0.0;
-    
-    for (std::size_t k = 0; k < n_features_; ++k){
-        normal_equation_rhs_ = 0.0;
-        coefficients_ = 0.0;
-        for (std::size_t j = 0; j < n_features_; ++j){
-            root_variance_[k*n_features_ + j] = 0.0; 
-        }
-    }
-    sum_of_squares_  = 0.0;
+void LinearRegression::reset()
+{
+    n_observations_ = 0;
+    sum_of_squares_ = 0.0;
+
+    std::fill(
+        normal_equation_rhs_.begin(),
+        normal_equation_rhs_.end(),
+        0.0
+    );
+
+    std::fill(
+        root_variance_.begin(),
+        root_variance_.end(),
+        0.0
+    );
+
+    const std::size_t n_coef =
+        n_features_ + (options_.fit_intercept ? 1 : 0);
+
+    std::fill(coefficients_.begin(), coefficients_.end(), 0.0);
     intercept_ = 0.0;
     solution_is_current_ = false;
 }

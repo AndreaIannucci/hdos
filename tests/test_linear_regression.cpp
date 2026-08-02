@@ -262,16 +262,6 @@ TEST(LinearRegressionRankOneUpdate, MatchesRefitWithoutIntercept)
 }
 
 
-
-
-
-
-
-
-
-
-
-
 TEST(LinearRegressionRankOneUpdate, MatchesRefitWithIntercept)
 {
     hdos::LinearRegressionOptions options;
