@@ -11,6 +11,7 @@ add_library(
     src/mat_print.cpp
     src/stable_norm.cpp
     src/triangular_solver.cpp
+    src/householder.cpp
 )
 
 target_compile_features(
