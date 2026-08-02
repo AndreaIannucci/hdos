@@ -1,7 +1,7 @@
 #pragma once
 
-#include <vector>
+#include <span>
 
 namespace hdos::detail{
-double stable_norm(const std::vector<double>& x);
+double stable_norm(std::span< const double> x);
 }
