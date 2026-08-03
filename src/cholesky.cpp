@@ -14,36 +14,32 @@
 
 namespace hdos::detail {
 
-std::vector<double> cholesky_decomp(
-    std::span<const double> M)
+void cholesky_decomp_in_place(
+    std::span<double> M)
 {
     const std::size_t N =
-        static_cast<std::size_t>(std::sqrt(M.size()));
+        static_cast<std::size_t>(
+            std::sqrt(M.size())
+        );
 
     if (N * N != M.size()) {
-        throw std::invalid_argument("The matrix must be square");
+        throw std::invalid_argument(
+            "The matrix must be square"
+        );
     }
 
-    // M remains unchanged. The upper triangle of L starts at zero.
-    std::vector<double> L(M.size(), 0.0);
-
     for (std::size_t j = 0; j < N; ++j) {
-        // Copy only the required lower part of column j.
-        for (std::size_t i = j; i < N; ++i) {
-            L[i + j * N] = M[i + j * N];
-        }
-
         // Subtract contributions from previously computed columns.
         for (std::size_t k = 0; k < j; ++k) {
-            const double factor = L[j + k * N];
+            const double factor = M[j + k * N];
 
             for (std::size_t i = j; i < N; ++i) {
-                L[i + j * N] -=
-                    L[i + k * N] * factor;
+                M[i + j * N] -=
+                    M[i + k * N] * factor;
             }
         }
 
-        const double diagonal = L[j + j * N];
+        const double diagonal = M[j + j * N];
 
         if (!(diagonal > 0.0)) {
             throw std::invalid_argument(
@@ -51,16 +47,91 @@ std::vector<double> cholesky_decomp(
             );
         }
 
-        L[j + j * N] = std::sqrt(diagonal);
+        M[j + j * N] = std::sqrt(diagonal);
 
         // Scale the part below the diagonal.
         for (std::size_t i = j + 1; i < N; ++i) {
-            L[i + j * N] /= L[j + j * N];
+            M[i + j * N] /= M[j + j * N];
+        }
+    }
+}
+
+
+std::vector<double> cholesky_decomp(
+    std::span<const double> M)
+{
+    std::vector<double> L(
+        M.begin(),
+        M.end()
+    );
+
+    cholesky_decomp_in_place(L);
+
+    // Optional: clear the upper triangle so the returned
+    // vector visibly contains only the lower factor.
+    const std::size_t N =
+        static_cast<std::size_t>(
+            std::sqrt(L.size())
+        );
+
+    for (std::size_t column = 1; column < N; ++column) {
+        for (std::size_t row = 0; row < column; ++row) {
+            L[row + column * N] = 0.0;
         }
     }
 
     return L;
 }
+
+
+
+// std::vector<double> cholesky_decomp(
+//     std::span<const double> M)
+// {
+//     const std::size_t N =
+//         static_cast<std::size_t>(std::sqrt(M.size()));
+
+//     if (N * N != M.size()) {
+//         throw std::invalid_argument("The matrix must be square");
+//     }
+
+//     // M remains unchanged. The upper triangle of L starts at zero.
+//     std::vector<double> L(M.size(), 0.0);
+
+//     for (std::size_t j = 0; j < N; ++j) {
+//         // Copy only the required lower part of column j.
+//         for (std::size_t i = j; i < N; ++i) {
+//             L[i + j * N] = M[i + j * N];
+//         }
+
+//         // Subtract contributions from previously computed columns.
+//         for (std::size_t k = 0; k < j; ++k) {
+//             const double factor = L[j + k * N];
+
+//             for (std::size_t i = j; i < N; ++i) {
+//                 L[i + j * N] -=
+//                     L[i + k * N] * factor;
+//             }
+//         }
+
+//         const double diagonal = L[j + j * N];
+
+//         if (!(diagonal > 0.0)) {
+//             throw std::invalid_argument(
+//                 "The matrix is not positive definite"
+//             );
+//         }
+
+//         L[j + j * N] = std::sqrt(diagonal);
+
+//         // Scale the part below the diagonal.
+//         for (std::size_t i = j + 1; i < N; ++i) {
+//             L[i + j * N] /= L[j + j * N];
+//         }
+//     }
+
+//     return L;
+// }
 
 
 // void rk1_cholesky(
