@@ -2,6 +2,7 @@
 #include "detail/cholesky.hpp"
 #include "detail/matrix_invert.hpp"
 
+#include <cmath>
 #include <utility>
 
 
@@ -37,14 +38,15 @@ namespace hdos {
     // Only the lower triangle of the Gram matrix is populated.
     std::vector<double> gram_matrix(n_coeff * n_coeff, 0.0);
     std::vector<double> feature_sums(n_features_, 0.0);
-    normal_equation_rhs_.assign(n_coeff, 0.0);
+    std::vector<double> normal_equation_rhs(n_coeff, 0.0);
+    
 
     double response_sum = 0.0;
-    sum_of_squares_ = 0.0;
+    double sum_of_squares = 0.0;
 
     for (std::size_t i = 0; i < n_samples; ++i) {
         response_sum += y[i];
-        sum_of_squares_ += y[i] * y[i];
+        sum_of_squares += y[i] * y[i];
     }
 
     for (std::size_t k = 0; k < n_features_; ++k) {
@@ -63,7 +65,7 @@ namespace hdos {
         }
 
         gram_matrix[k + k * n_coeff] = diagonal;
-        normal_equation_rhs_[k] = cross_product;
+        normal_equation_rhs[k] = cross_product;
         feature_sums[k] = feature_sum;
 
         // Complete column k below the diagonal.
@@ -90,13 +92,16 @@ namespace hdos {
         gram_matrix[intercept + intercept * n_coeff] =
             static_cast<double>(n_samples);
 
-        normal_equation_rhs_[intercept] = response_sum;
+        normal_equation_rhs[intercept] = response_sum;
     }
     
     for (std::size_t j = 0; j < n_features_; ++j) {
         gram_matrix[j + j * n_coeff] += options_.l2_penalty;
     }
-    root_variance_ = detail::cholesky_decomp(gram_matrix);
+    std::vector<double> root_variance = detail::cholesky_decomp(gram_matrix);
+    root_variance_ = std::move(root_variance);
+    sum_of_squares = sum_of_squares;
+    normal_equation_rhs_ = normal_equation_rhs;
     n_observations_ = n_samples;
 };
 
@@ -137,6 +142,12 @@ void LinearRegression::rk1_update(
         throw std::invalid_argument(
             "Incompatible dimensions");
     }
+
+    for (double value : x) {
+    if (!std::isfinite(value)) {
+        throw std::invalid_argument("Input contains non-finite values");
+    }
+}
 
     detail::rk1_cholesky(
         root_variance_,
