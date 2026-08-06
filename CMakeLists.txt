@@ -13,6 +13,7 @@ add_library(
     src/triangular_solver.cpp
     src/householder.cpp
     src/QR.cpp
+    src/jacobi_rotation.cpp
 )
 
 target_compile_features(

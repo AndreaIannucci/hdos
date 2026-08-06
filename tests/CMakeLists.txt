@@ -4,10 +4,11 @@ add_executable(
     # test_triangular_solver.cpp
     # test_linear_regression.cpp
     # test_householder.cpp
-    #test_householder_left.cpp
+    # test_householder_left.cpp
     # test_householder_right.cpp
-    #test_QR.cpp
-    test_qr_operations.cpp
+    # test_QR.cpp
+    # test_qr_operations.cpp
+    test_jacobi_rotation.cpp
 )
 
 target_link_libraries(
