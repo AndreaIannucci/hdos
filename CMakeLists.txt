@@ -14,6 +14,7 @@ add_library(
     src/householder.cpp
     src/QR.cpp
     src/jacobi_rotation.cpp
+    src/one_sided_jacobi.cpp
 )
 
 target_compile_features(

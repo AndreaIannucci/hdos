@@ -8,7 +8,8 @@ add_executable(
     # test_householder_right.cpp
     # test_QR.cpp
     # test_qr_operations.cpp
-    test_jacobi_rotation.cpp
+    # test_jacobi_rotation.cpp
+    test_one_sided_jacobi.cpp
 )
 
 target_link_libraries(
