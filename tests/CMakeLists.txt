@@ -3,7 +3,11 @@ add_executable(
     # test_cholesky.cpp
     # test_triangular_solver.cpp
     # test_linear_regression.cpp
-    test_householder.cpp
+    # test_householder.cpp
+    #test_householder_left.cpp
+    # test_householder_right.cpp
+    #test_QR.cpp
+    test_qr_operations.cpp
 )
 
 target_link_libraries(

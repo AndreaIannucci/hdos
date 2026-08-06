@@ -12,6 +12,7 @@ add_library(
     src/stable_norm.cpp
     src/triangular_solver.cpp
     src/householder.cpp
+    src/QR.cpp
 )
 
 target_compile_features(
