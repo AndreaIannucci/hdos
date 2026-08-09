@@ -28,6 +28,12 @@ option(
     ${HDOS_IS_TOP_LEVEL}
 )
 
+option(
+    HDOS_BUILD_EXAMPLES
+    "Build the HDOS examples"
+    OFF
+)
+
 add_library(
     hdos
     src/cholesky.cpp
@@ -118,6 +124,11 @@ if(HDOS_BUILD_TESTS)
     FetchContent_MakeAvailable(googletest)
 
     add_subdirectory(tests)
+endif()
+
+
+if(HDOS_BUILD_EXAMPLES)
+    add_subdirectory(examples)
 endif()
 
 # ------------------------------------------------------------------
