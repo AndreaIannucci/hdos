@@ -59,7 +59,9 @@ void LinearRegression::make_design_row(
     }
 
     if (row.size() != parameter_count()) {
-        throw std::invalid_argument("Invalid design-row dimension");
+        throw std::invalid_argument(
+            "Invalid design-row dimension"
+        );
     }
 
     for (std::size_t j = 0; j < n_features_; ++j) {
@@ -138,14 +140,103 @@ void LinearRegression::fit(
         0.0
     );
 
-    double response_sum = 0.0;
-    double sum_of_squares = 0.0;
+    /*
+     * Centred sufficient statistics used for stable R-squared
+     * computation.
+     */
+    std::vector<double> new_feature_mean(
+        n_features_,
+        0.0
+    );
 
+    std::vector<double> new_centered_feature_gram(
+        n_features_ * n_features_,
+        0.0
+    );
+
+    std::vector<double> new_centered_feature_response(
+        n_features_,
+        0.0
+    );
+
+    double response_sum = 0.0;
+    double new_response_mean = 0.0;
+    double new_response_m2 = 0.0;
+
+    /*
+     * Compute the centred feature and response statistics using
+     * the multivariate Welford recurrence.
+     */
     for (std::size_t i = 0; i < n_samples; ++i) {
-        response_sum += y[i];
-        sum_of_squares += y[i] * y[i];
+        const double response = y[i];
+
+        const double old_count =
+            static_cast<double>(i);
+
+        const double new_count =
+            static_cast<double>(i + 1);
+
+        const double merge_weight =
+            old_count / new_count;
+
+        const double response_delta =
+            response - new_response_mean;
+
+        response_sum += response;
+
+        for (
+            std::size_t column = 0;
+            column < n_features_;
+            ++column
+        ) {
+            const double column_delta =
+                X[i + column * n_samples] -
+                new_feature_mean[column];
+
+            for (
+                std::size_t row = column;
+                row < n_features_;
+                ++row
+            ) {
+                const double row_delta =
+                    X[i + row * n_samples] -
+                    new_feature_mean[row];
+
+                new_centered_feature_gram[
+                    row + column * n_features_
+                ] +=
+                    merge_weight *
+                    row_delta *
+                    column_delta;
+            }
+
+            new_centered_feature_response[column] +=
+                merge_weight *
+                column_delta *
+                response_delta;
+        }
+
+        for (std::size_t j = 0; j < n_features_; ++j) {
+            const double feature_delta =
+                X[i + j * n_samples] -
+                new_feature_mean[j];
+
+            new_feature_mean[j] +=
+                feature_delta / new_count;
+        }
+
+        new_response_mean +=
+            response_delta / new_count;
+
+        new_response_m2 +=
+            merge_weight *
+            response_delta *
+            response_delta;
     }
 
+    /*
+     * Construct X^T X and X^T y.
+     */
     for (std::size_t k = 0; k < n_features_; ++k) {
         const std::size_t k_offset = k * n_samples;
 
@@ -170,7 +261,9 @@ void LinearRegression::fit(
             j < n_features_;
             ++j
         ) {
-            const std::size_t j_offset = j * n_samples;
+            const std::size_t j_offset =
+                j * n_samples;
+
             double cross = 0.0;
 
             for (std::size_t i = 0; i < n_samples; ++i) {
@@ -197,7 +290,8 @@ void LinearRegression::fit(
             intercept + intercept * n_coeff
         ] = static_cast<double>(n_samples);
 
-        normal_equation_rhs[intercept] = response_sum;
+        normal_equation_rhs[intercept] =
+            response_sum;
     }
 
     // Do not regularise the intercept.
@@ -212,7 +306,18 @@ void LinearRegression::fit(
     normal_equation_rhs_ =
         std::move(normal_equation_rhs);
 
-    sum_of_squares_ = sum_of_squares;
+    feature_mean_ =
+        std::move(new_feature_mean);
+
+    centered_feature_gram_ =
+        std::move(new_centered_feature_gram);
+
+    centered_feature_response_ =
+        std::move(new_centered_feature_response);
+
+    response_mean_ = new_response_mean;
+    response_m2_ = new_response_m2;
+
     n_observations_ = n_samples;
     solution_is_current_ = false;
 }
@@ -280,20 +385,25 @@ void LinearRegression::update_qr_state(
         const double upper =
             qr_factor_[j + j * dimension];
 
-        const double lower = work_row[j];
+        const double lower =
+            work_row[j];
 
         if (lower == 0.0) {
             continue;
         }
 
-        const double radius = std::hypot(upper, lower);
+        const double radius =
+            std::hypot(upper, lower);
 
         if (radius == 0.0) {
             continue;
         }
 
-        const double cosine = upper / radius;
-        const double sine = lower / radius;
+        const double cosine =
+            upper / radius;
+
+        const double sine =
+            lower / radius;
 
         for (
             std::size_t column = j;
@@ -303,19 +413,25 @@ void LinearRegression::update_qr_state(
             const std::size_t index =
                 j + column * dimension;
 
-            const double top = qr_factor_[index];
-            const double bottom = work_row[column];
+            const double top =
+                qr_factor_[index];
+
+            const double bottom =
+                work_row[column];
 
             qr_factor_[index] =
-                cosine * top + sine * bottom;
+                cosine * top +
+                sine * bottom;
 
             work_row[column] =
-                -sine * top + cosine * bottom;
+                -sine * top +
+                cosine * bottom;
         }
 
         work_row[j] = 0.0;
 
-        const double top_response = qr_rhs_[j];
+        const double top_response =
+            qr_rhs_[j];
 
         qr_rhs_[j] =
             cosine * top_response +
@@ -361,17 +477,88 @@ void LinearRegression::rk1_update(
     std::vector<double> row(parameter_count());
     make_design_row(x, row);
 
-    if (options_.solver ==
-        LinearRegressionSolver::cholesky) {
+    if (
+        options_.solver ==
+        LinearRegressionSolver::cholesky
+    ) {
         update_cholesky_state(row, y);
     } else {
         update_qr_state(row, y);
     }
 
-    sum_of_squares_ += y * y;
+    /*
+     * Update the centred training statistics only after the
+     * matrix update has succeeded. At this point n_observations_
+     * still contains the previous observation count.
+     */
+    update_training_statistics(x, y);
 
     ++n_observations_;
     solution_is_current_ = false;
+}
+
+void LinearRegression::update_training_statistics(
+    std::span<const double> x,
+    double y
+) noexcept
+{
+    const double old_count =
+        static_cast<double>(n_observations_);
+
+    const double new_count =
+        static_cast<double>(n_observations_ + 1);
+
+    const double merge_weight =
+        old_count / new_count;
+
+    const double response_delta =
+        y - response_mean_;
+
+    for (
+        std::size_t column = 0;
+        column < n_features_;
+        ++column
+    ) {
+        const double column_delta =
+            x[column] - feature_mean_[column];
+
+        for (
+            std::size_t row = column;
+            row < n_features_;
+            ++row
+        ) {
+            const double row_delta =
+                x[row] - feature_mean_[row];
+
+            centered_feature_gram_[
+                row + column * n_features_
+            ] +=
+                merge_weight *
+                row_delta *
+                column_delta;
+        }
+
+        centered_feature_response_[column] +=
+            merge_weight *
+            column_delta *
+            response_delta;
+    }
+
+    for (std::size_t j = 0; j < n_features_; ++j) {
+        const double feature_delta =
+            x[j] - feature_mean_[j];
+
+        feature_mean_[j] +=
+            feature_delta / new_count;
+    }
+
+    response_mean_ +=
+        response_delta / new_count;
+
+    response_m2_ +=
+        merge_weight *
+        response_delta *
+        response_delta;
 }
 
 void LinearRegression::batch_update(
@@ -416,9 +603,12 @@ void LinearRegression::unpack_solution(
         );
     }
 
+    const auto coefficient_solution =
+        solution.first(n_features_);
+
     coefficients_.assign(
-        solution.begin(),
-        solution.begin() + n_features_
+        coefficient_solution.begin(),
+        coefficient_solution.end()
     );
 
     if (options_.fit_intercept) {
@@ -470,12 +660,16 @@ void LinearRegression::solve_svd()
         0.0
     );
 
-    for (std::size_t column = 0;
-         column < dimension;
-         ++column) {
-        for (std::size_t row = 0;
-             row < dimension;
-             ++row) {
+    for (
+        std::size_t column = 0;
+        column < dimension;
+        ++column
+    ) {
+        for (
+            std::size_t row = 0;
+            row < dimension;
+            ++row
+        ) {
             system[row + column * system_rows] =
                 qr_factor_[
                     row + column * dimension
@@ -499,27 +693,35 @@ void LinearRegression::solve_svd()
         }
     }
 
-    const auto decomposition = detail::jacobi_svd(
-        std::span<const double>(system),
-        system_rows,
-        dimension
-    );
+    const auto decomposition =
+        detail::jacobi_svd(
+            std::span<const double>(system),
+            system_rows,
+            dimension
+        );
 
     double largest_singular_value = 0.0;
 
-    for (double singular_value :
-         decomposition.singular_values) {
-        largest_singular_value = std::max(
-            largest_singular_value,
-            singular_value
-        );
+    for (
+        double singular_value :
+        decomposition.singular_values
+    ) {
+        largest_singular_value =
+            std::max(
+                largest_singular_value,
+                singular_value
+            );
     }
 
-    double relative_tolerance = options_.svd_rcond;
+    double relative_tolerance =
+        options_.svd_rcond;
 
     if (relative_tolerance == 0.0) {
         const std::size_t scale_dimension =
-            std::max(n_observations_, dimension);
+            std::max(
+                n_observations_,
+                dimension
+            );
 
         relative_tolerance =
             std::numeric_limits<double>::epsilon() *
@@ -527,7 +729,8 @@ void LinearRegression::solve_svd()
     }
 
     const double cutoff =
-        relative_tolerance * largest_singular_value;
+        relative_tolerance *
+        largest_singular_value;
 
     // Compute U^T rhs.
     std::vector<double> projected_rhs(
@@ -538,14 +741,21 @@ void LinearRegression::solve_svd()
     for (std::size_t j = 0; j < dimension; ++j) {
         double value = 0.0;
 
-        for (std::size_t i = 0; i < system_rows; ++i) {
+        for (
+            std::size_t i = 0;
+            i < system_rows;
+            ++i
+        ) {
             value +=
                 decomposition.U[
                     i + j * system_rows
                 ] * rhs[i];
         }
 
-        if (decomposition.singular_values[j] > cutoff) {
+        if (
+            decomposition.singular_values[j] >
+            cutoff
+        ) {
             projected_rhs[j] =
                 value /
                 decomposition.singular_values[j];
@@ -570,6 +780,120 @@ void LinearRegression::solve_svd()
     unpack_solution(solution);
 }
 
+double LinearRegression::residual_sum_of_squares() const
+{
+    double residual_sum =
+        response_m2_;
+
+    /*
+     * Centred residual contribution:
+     *
+     *     sum_i ((y_i - mean(y))
+     *            - beta^T (x_i - mean(x)))^2.
+     */
+    for (std::size_t j = 0; j < n_features_; ++j) {
+        residual_sum -=
+            2.0 *
+            coefficients_[j] *
+            centered_feature_response_[j];
+    }
+
+    /*
+     * Compute beta^T C_xx beta using the stored lower
+     * triangle of C_xx.
+     */
+    for (
+        std::size_t column = 0;
+        column < n_features_;
+        ++column
+    ) {
+        residual_sum +=
+            coefficients_[column] *
+            coefficients_[column] *
+            centered_feature_gram_[
+                column + column * n_features_
+            ];
+
+        for (
+            std::size_t row = column + 1;
+            row < n_features_;
+            ++row
+        ) {
+            residual_sum +=
+                2.0 *
+                coefficients_[row] *
+                coefficients_[column] *
+                centered_feature_gram_[
+                    row + column * n_features_
+                ];
+        }
+    }
+
+    /*
+     * Add the contribution from the mean residual. This is
+     * generally non-zero when the model has no intercept.
+     */
+    double mean_prediction =
+        intercept_;
+
+    for (std::size_t j = 0; j < n_features_; ++j) {
+        mean_prediction +=
+            feature_mean_[j] *
+            coefficients_[j];
+    }
+
+    const double mean_residual =
+        response_mean_ -
+        mean_prediction;
+
+    residual_sum +=
+        static_cast<double>(n_observations_) *
+        mean_residual *
+        mean_residual;
+
+    /*
+     * Roundoff can produce a very small negative value even
+     * though RSS is mathematically non-negative.
+     */
+    return std::max(0.0, residual_sum);
+}
+
+void LinearRegression::update_r_squared()
+{
+    const double rss =
+        residual_sum_of_squares();
+
+    /*
+     * A response is constant precisely when its centred sum
+     * of squares is zero.
+     */
+    if (response_m2_ <= 0.0) {
+        const double response_scale =
+            std::max(
+                1.0,
+                std::abs(response_mean_)
+            );
+
+        const double roundoff =
+            std::numeric_limits<double>::epsilon() *
+            response_scale;
+
+        const double tolerance =
+            100.0 *
+            static_cast<double>(n_observations_) *
+            roundoff *
+            roundoff;
+
+        r_squared_ =
+            rss <= tolerance ? 1.0 : 0.0;
+
+        return;
+    }
+
+    r_squared_ =
+        1.0 - rss / response_m2_;
+}
+
 void LinearRegression::solve_if_needed()
 {
     if (solution_is_current_) {
@@ -582,13 +906,16 @@ void LinearRegression::solve_if_needed()
         );
     }
 
-    if (options_.solver ==
-        LinearRegressionSolver::cholesky) {
+    if (
+        options_.solver ==
+        LinearRegressionSolver::cholesky
+    ) {
         solve_cholesky();
     } else {
         solve_svd();
     }
 
+    update_r_squared();
     solution_is_current_ = true;
 }
 
@@ -612,10 +939,13 @@ double LinearRegression::predict(
 
     solve_if_needed();
 
-    double output = intercept_;
+    double output =
+        intercept_;
 
     for (std::size_t j = 0; j < n_features_; ++j) {
-        output += x[j] * coefficients_[j];
+        output +=
+            x[j] *
+            coefficients_[j];
     }
 
     return output;
@@ -634,6 +964,12 @@ double LinearRegression::intercept()
     return intercept_;
 }
 
+double LinearRegression::r_squared()
+{
+    solve_if_needed();
+    return r_squared_;
+}
+
 std::size_t
 LinearRegression::n_features() const noexcept
 {
@@ -648,10 +984,29 @@ LinearRegression::n_observations() const noexcept
 
 void LinearRegression::reset()
 {
-    const std::size_t dimension = parameter_count();
+    const std::size_t dimension =
+        parameter_count();
 
     n_observations_ = 0;
-    sum_of_squares_ = 0.0;
+
+    feature_mean_.assign(
+        n_features_,
+        0.0
+    );
+
+    centered_feature_gram_.assign(
+        n_features_ * n_features_,
+        0.0
+    );
+
+    centered_feature_response_.assign(
+        n_features_,
+        0.0
+    );
+
+    response_mean_ = 0.0;
+    response_m2_ = 0.0;
+    r_squared_ = 0.0;
 
     root_variance_.assign(
         dimension * dimension,

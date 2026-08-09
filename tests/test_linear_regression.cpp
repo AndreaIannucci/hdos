@@ -518,19 +518,19 @@ TEST_P(LinearRegressionSolverTest, ResetClearsModelState)
     EXPECT_EQ(model.n_observations(), 0);
 
     EXPECT_THROW(
-        model.coefficients(),
+        static_cast<void>(model.coefficients()),
         std::logic_error
     );
 
     EXPECT_THROW(
-        model.intercept(),
+        static_cast<void>(model.intercept()),
         std::logic_error
     );
 
     const std::array<double, 1> input{1.0};
 
     EXPECT_THROW(
-        model.predict(input),
+        static_cast<void>(model.predict(input)),
         std::logic_error
     );
 }
@@ -1542,7 +1542,7 @@ TEST_P(LinearRegressionSolverTest, PredictRejectsWrongDimension)
     const std::array<double, 1> input{1.0};
 
     EXPECT_THROW(
-        model.predict(input),
+        static_cast<void>(model.predict(input)),
         std::invalid_argument
     );
 }
@@ -1573,7 +1573,7 @@ TEST_P(LinearRegressionSolverTest, PredictRejectsNonFiniteInput)
     };
 
     EXPECT_THROW(
-        model.predict(input),
+        static_cast<void>(model.predict(input)),
         std::invalid_argument
     );
 }
@@ -1588,12 +1588,12 @@ TEST_P(LinearRegressionSolverTest, AccessorsRejectUnfittedModel)
     );
 
     EXPECT_THROW(
-        model.coefficients(),
+        static_cast<void>(model.coefficients()),
         std::logic_error
     );
 
     EXPECT_THROW(
-        model.intercept(),
+        static_cast<void>(model.intercept()),
         std::logic_error
     );
 
@@ -1603,9 +1603,540 @@ TEST_P(LinearRegressionSolverTest, AccessorsRejectUnfittedModel)
     };
 
     EXPECT_THROW(
-        model.predict(input),
+        static_cast<void>(model.predict(input)),
+        std::logic_error
+    );
+}
+/*
+ * R-squared tests.
+ */
+
+TEST_P(
+    LinearRegressionSolverTest,
+    ExactFitHasUnitRSquared
+)
+{
+    LinearRegression model(
+        1,
+        make_options(GetParam())
+    );
+
+    const std::vector<double> X{
+        0.0,
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> y{
+        1.0,
+        3.0,
+        5.0,
+        7.0
+    };
+
+    model.fit(X, y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        1.0,
+        tolerance
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    NoisyFitHasKnownRSquared
+)
+{
+    LinearRegression model(
+        1,
+        make_options(GetParam())
+    );
+
+    /*
+     * The fitted line is
+     *
+     *     y_hat = 0.9 + 0.9x.
+     *
+     * RSS = 0.7 and TSS = 4.75, giving
+     *
+     *     R^2 = 1 - 0.7 / 4.75
+     *         = 81 / 95.
+     */
+    const std::vector<double> X{
+        0.0,
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> y{
+        1.0,
+        2.0,
+        2.0,
+        4.0
+    };
+
+    model.fit(X, y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        81.0 / 95.0,
+        tolerance
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    RidgeRSquaredExcludesPenalty
+)
+{
+    LinearRegression model(
+        1,
+        make_options(
+            GetParam(),
+            true,
+            3.0
+        )
+    );
+
+    /*
+     * The ridge solution is
+     *
+     *     intercept = 5,
+     *     coefficient = 0.8.
+     *
+     * Predictions are (4.2, 5.0, 5.8), so
+     *
+     *     RSS = 2.88,
+     *     TSS = 8,
+     *     R^2 = 0.64.
+     */
+    const std::vector<double> X{
+        -1.0,
+         0.0,
+         1.0
+    };
+
+    const std::vector<double> y{
+        3.0,
+        5.0,
+        7.0
+    };
+
+    model.fit(X, y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        0.64,
+        tolerance
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    NoInterceptModelUsesCentredTotalSumOfSquares
+)
+{
+    LinearRegression model(
+        1,
+        make_options(
+            GetParam(),
+            false
+        )
+    );
+
+    /*
+     * Without an intercept:
+     *
+     *     beta = (1*2 + 2*1) / (1 + 4) = 0.8.
+     *
+     * RSS = 1.8 and centred TSS = 0.5, hence
+     *
+     *     R^2 = 1 - 1.8 / 0.5 = -2.6.
+     */
+    const std::vector<double> X{
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> y{
+        2.0,
+        1.0
+    };
+
+    model.fit(X, y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        -2.6,
+        tolerance
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    PerfectConstantResponseHasUnitRSquared
+)
+{
+    LinearRegression model(
+        1,
+        make_options(GetParam())
+    );
+
+    const std::vector<double> X{
+        0.0,
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> y{
+        5.0,
+        5.0,
+        5.0,
+        5.0
+    };
+
+    model.fit(X, y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        1.0,
+        tolerance
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    ImperfectConstantResponseHasZeroRSquared
+)
+{
+    LinearRegression model(
+        1,
+        make_options(
+            GetParam(),
+            false
+        )
+    );
+
+    const std::vector<double> X{
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> y{
+        5.0,
+        5.0,
+        5.0
+    };
+
+    model.fit(X, y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        0.0,
+        tolerance
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    RankOneUpdateRefreshesRSquared
+)
+{
+    LinearRegression updated_model(
+        1,
+        make_options(GetParam())
+    );
+
+    LinearRegression reference_model(
+        1,
+        make_options(GetParam())
+    );
+
+    const std::vector<double> initial_X{
+        0.0,
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> initial_y{
+        1.0,
+        3.0,
+        5.0
+    };
+
+    updated_model.fit(initial_X, initial_y);
+
+    EXPECT_NEAR(
+        updated_model.r_squared(),
+        1.0,
+        tolerance
+    );
+
+    const std::array<double, 1> new_x{3.0};
+    updated_model.rk1_update(new_x, 8.0);
+
+    const std::vector<double> complete_X{
+        0.0,
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> complete_y{
+        1.0,
+        3.0,
+        5.0,
+        8.0
+    };
+
+    reference_model.fit(
+        complete_X,
+        complete_y
+    );
+
+    EXPECT_NEAR(
+        updated_model.r_squared(),
+        reference_model.r_squared(),
+        tolerance
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    BatchUpdateRefreshesRSquared
+)
+{
+    LinearRegression updated_model(
+        1,
+        make_options(GetParam())
+    );
+
+    LinearRegression reference_model(
+        1,
+        make_options(GetParam())
+    );
+
+    const std::vector<double> initial_X{
+        0.0,
+        1.0
+    };
+
+    const std::vector<double> initial_y{
+        1.0,
+        3.0
+    };
+
+    updated_model.fit(initial_X, initial_y);
+
+    const std::vector<double> additional_X{
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> additional_y{
+        5.0,
+        8.0
+    };
+
+    updated_model.batch_update(
+        additional_X,
+        additional_y
+    );
+
+    const std::vector<double> complete_X{
+        0.0,
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> complete_y{
+        1.0,
+        3.0,
+        5.0,
+        8.0
+    };
+
+    reference_model.fit(
+        complete_X,
+        complete_y
+    );
+
+    EXPECT_NEAR(
+        updated_model.r_squared(),
+        reference_model.r_squared(),
+        tolerance
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    RefitReplacesResponseStatistics
+)
+{
+    LinearRegression model(
+        1,
+        make_options(GetParam())
+    );
+
+    const std::vector<double> first_X{
+        0.0,
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> first_y{
+        1.0,
+        3.0,
+        5.0
+    };
+
+    model.fit(first_X, first_y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        1.0,
+        tolerance
+    );
+
+    const std::vector<double> second_X{
+        0.0,
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> second_y{
+        1.0,
+        2.0,
+        2.0,
+        4.0
+    };
+
+    model.fit(second_X, second_y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        81.0 / 95.0,
+        tolerance
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    RSquaredRejectsUnfittedAndResetModel
+)
+{
+    LinearRegression model(
+        1,
+        make_options(GetParam())
+    );
+
+    EXPECT_THROW(
+        {
+            const double result = model.r_squared();
+            static_cast<void>(result);
+        },
+        std::logic_error
+    );
+
+    const std::vector<double> X{
+        0.0,
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> y{
+        1.0,
+        3.0,
+        5.0
+    };
+
+    model.fit(X, y);
+    model.reset();
+
+    EXPECT_THROW(
+        {
+            const double result = model.r_squared();
+            static_cast<void>(result);
+        },
         std::logic_error
     );
 }
 
-} // namespace
+TEST_P(
+    LinearRegressionSolverTest,
+    RSquaredIsStableForLargeResponseOffset
+)
+{
+    LinearRegression model(
+        1,
+        make_options(GetParam())
+    );
+
+    /*
+     * Adding a constant to every response must not change R^2.
+     */
+    constexpr double offset = 1e9;
+
+    const std::vector<double> X{
+        0.0,
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> y{
+        offset + 1.0,
+        offset + 2.0,
+        offset + 2.0,
+        offset + 4.0
+    };
+
+    model.fit(X, y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        81.0 / 95.0,
+        1e-6
+    );
+}
+
+TEST(
+    LinearRegressionRSquaredSvdTest,
+    RankDeficientExactFitHasUnitRSquared
+)
+{
+    LinearRegression model(
+        2,
+        make_options(
+            LinearRegressionSolver::svd
+        )
+    );
+
+    const std::vector<double> X = to_column_major({
+        {-1.0, -2.0},
+        { 0.0,  0.0},
+        { 1.0,  2.0}
+    });
+
+    const std::vector<double> y{
+        -3.0,
+         0.0,
+         3.0
+    };
+
+    model.fit(X, y);
+
+    EXPECT_NEAR(
+        model.r_squared(),
+        1.0,
+        1e-8
+    );
+}
+}
