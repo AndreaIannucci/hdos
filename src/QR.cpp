@@ -8,24 +8,36 @@
 
 
 namespace hdos::detail{
-std::vector<double> QR_decomp(std::span<double> A, std::size_t rows, std::size_t cols){
-    if (A.size() != rows * cols){
-        throw std::invalid_argument("Invalid matrix dimension");
+std::vector<double> QR_decomp(
+    std::span<double> A,
+    std::size_t rows,
+    std::size_t cols
+)
+{
+    if (rows == 0 || cols == 0) {
+        throw std::invalid_argument(
+            "The matrix cannot have 0 rows or 0 columns"
+        );
     }
 
-    if (cols > std::numeric_limits<std::size_t>::max() / rows ||
-    A.size() != rows * cols)
-{
-    throw std::invalid_argument(
-        "Invalid matrix dimensions");
-}
+    if (
+        cols >
+            std::numeric_limits<std::size_t>::max() / rows ||
+        A.size() != rows * cols
+    ) {
+        throw std::invalid_argument(
+            "Invalid matrix dimensions"
+        );
+    }
 
     for (double value : A) {
-    if (!std::isfinite(value)) {
-        throw std::invalid_argument(
-            "The matrix must contain only finite entries");
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument(
+                "The matrix must contain only finite entries"
+            );
+        }
     }
-}
+
     std::size_t reflector_count = std::min(rows, cols);
     std::vector<double> tau(reflector_count, 0.0);
 

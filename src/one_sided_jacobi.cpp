@@ -50,8 +50,9 @@ SVDResult jacobi_svd(
         V[k + k*cols] = 1;
     }
 
-    double epsilon = std::numeric_limits<double>::epsilon();
-    double tolerance = tol_const * rows * epsilon;
+    const double epsilon = std::numeric_limits<double>::epsilon();
+    const double tolerance = tol_const * static_cast<double>(rows) * epsilon;
+    
     bool converged = false;
 
     for (std::size_t sweep = 0; sweep < max_sweeps; ++sweep){

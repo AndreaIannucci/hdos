@@ -73,14 +73,27 @@ namespace hdos {
 
         // V is n_features x n_features (or thin as appropriate).
         // Its first n_components columns are the principal directions.
+        const std::size_t component_entries =
+        n_features_ * n_components_;
+
         std::vector<double> new_components(
+            component_entries
+        );
+
+        std::copy_n(
             svd.V.begin(),
-            svd.V.begin() + n_features_ * n_components_
+            component_entries,
+            new_components.begin()
         );
 
         std::vector<double> new_singular_values(
+            n_components_
+        );
+
+        std::copy_n(
             svd.singular_values.begin(),
-            svd.singular_values.begin() + n_components_
+            n_components_,
+            new_singular_values.begin()
         );
 
         std::vector<double> new_explained_variance(n_components_);
@@ -167,7 +180,7 @@ namespace hdos {
             }
             std::vector<double> W(n_features_ * (1+ n_components_));
             std::copy(components_.begin(), components_.end(), W.begin());
-            std::copy(q.begin(), q.end(), W.begin() + n_features_ * n_components_);
+            std::copy_n( q.begin(), q.size(), W.data() + n_features_ * n_components_);
         
         std::vector<double> K((n_components_ + 1) * (n_components_ + 1), 0.0);
         for (std::size_t j = 0; j < n_components_; ++j) {
@@ -194,9 +207,9 @@ namespace hdos {
                 }
             }
         }
-        std::copy(K_decomp.singular_values.begin(),
-          K_decomp.singular_values.begin() + n_components_,
-          new_singular_values.begin());
+        std::copy_n(K_decomp.singular_values.begin(),
+                    n_components_,
+                    new_singular_values.begin());
 
     }
         else{
@@ -220,9 +233,7 @@ namespace hdos {
                 }
             }
         }
-        std::copy(K_decomp.singular_values.begin(),
-          K_decomp.singular_values.begin() + n_components_,
-          new_singular_values.begin());
+        std::copy_n( K_decomp.singular_values.begin(), n_components_, new_singular_values.begin());
         }
 
 

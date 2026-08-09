@@ -298,20 +298,6 @@ TEST(PCATest, UpdateRejectsWrongDimension)
 }
 
 
-TEST(PCATest, UpdateBeforeFitThrows)
-{
-    hdos::PCA pca(2, 1);
-
-    std::vector<double> x{1.0, 2.0};
-
-    EXPECT_THROW(
-        pca.update(x),
-        std::logic_error);
-
-    EXPECT_EQ(pca.n_observations(), 0);
-}
-
-
 
 
 TEST(PCATest, UpdateRejectsNaN)

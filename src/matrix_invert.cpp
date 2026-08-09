@@ -19,9 +19,6 @@ std::vector<double> solve_pos_definite_cholesky(
     // (L L*)x = b:
     // first solve Ly = b, then solve L*x = y.
 
-    const std::size_t N =
-        static_cast<std::size_t>(std::sqrt(L.size()));
-
     const std::vector<double> y =
         lower_triangular_solver(L, b);
 
@@ -48,10 +45,10 @@ std::vector<double> invert_pos_def_cholesky(
         const std::vector<double> L_inv_k_col =
             solve_pos_definite_cholesky(L, e_k);
 
-        std::copy(
+        std::copy_n(
             L_inv_k_col.begin(),
-            L_inv_k_col.end(),
-            L_inv.begin() + k * N
+            N,
+            L_inv.data() + k * N
         );
 
         if (k < N - 1) {
