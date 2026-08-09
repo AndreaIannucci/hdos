@@ -1,32 +1,39 @@
 #pragma once
 
-#include <vector>
 #include <cstddef>
 #include <span>
-#include <stdexcept>
+#include <vector>
 
+namespace hdos {
 
-namespace hdos{
-struct LinearRegressionOptions{
-    bool fit_intercept = true;
-    double l2_penalty = 0.0;
+enum class LinearRegressionSolver {
+    cholesky,
+    svd
 };
 
-class LinearRegression{
-    public:
-    
-    LinearRegression(
-    std::size_t n_features,
-    LinearRegressionOptions options = {});
+struct LinearRegressionOptions {
+    bool fit_intercept = true;
+    double l2_penalty = 0.0;
 
-    // Modify only the sufficient statistics
-    // Clear past estimates
+    LinearRegressionSolver solver =
+        LinearRegressionSolver::cholesky;
+
+    // Relative singular-value cutoff.
+    // Zero means choose the tolerance automatically.
+    double svd_rcond = 0.0;
+};
+
+class LinearRegression {
+public:
+    LinearRegression(
+        std::size_t n_features,
+        LinearRegressionOptions options = {}
+    );
+
     void fit(
         std::span<const double> X,
         std::span<const double> y
     );
-
-    // Create design matrix, create covariance matrix and X^t y
 
     void rk1_update(
         std::span<const double> x,
@@ -39,6 +46,7 @@ class LinearRegression{
     );
 
     double predict(std::span<const double> x);
+
     const std::vector<double>& coefficients();
     double intercept();
 
@@ -47,18 +55,50 @@ class LinearRegression{
 
     void reset();
 
-    private:
+private:
+    std::size_t parameter_count() const noexcept;
 
-    // Lazy solving
+    void make_design_row(
+        std::span<const double> x,
+        std::span<double> row
+    ) const;
+
+    void update_cholesky_state(
+        std::span<const double> row,
+        double y
+    );
+
+    void update_qr_state(
+        std::span<const double> row,
+        double y
+    );
+
     void solve_if_needed();
+    void solve_cholesky();
+    void solve_svd();
+
+    void unpack_solution(
+        std::span<const double> solution
+    );
 
     std::size_t n_features_;
     std::size_t n_observations_ = 0;
 
     LinearRegressionOptions options_;
 
+    // Cholesky backend state.
     std::vector<double> root_variance_;
     std::vector<double> normal_equation_rhs_;
+
+    // SVD backend state:
+    //
+    //     X = Q R,
+    //     qr_rhs_ = Q^T y.
+    //
+    // Only the part relevant to the least-squares solution is retained.
+    std::vector<double> qr_factor_;
+    std::vector<double> qr_rhs_;
+
     double sum_of_squares_ = 0.0;
 
     std::vector<double> coefficients_;
@@ -66,4 +106,5 @@ class LinearRegression{
 
     bool solution_is_current_ = false;
 };
-}
+
+} 

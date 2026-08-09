@@ -1,45 +1,142 @@
 #include "hdos/linear_regression.hpp"
+
 #include "detail/cholesky.hpp"
 #include "detail/matrix_invert.hpp"
+#include "detail/one_sided_jacobi.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 #include <utility>
-
-
-// Test for nan and infty
+#include <vector>
 
 namespace hdos {
-    LinearRegression::LinearRegression(
-        std::size_t n_features,
-        LinearRegressionOptions options): n_features_(n_features), options_(options){}
-    
 
-    void LinearRegression::fit(
-    std::span<const double> X,
-    std::span<const double> y
+LinearRegression::LinearRegression(
+    std::size_t n_features,
+    LinearRegressionOptions options
 )
-{   
-
-    const std::size_t n_samples = y.size();
-
-    if (n_samples == 0) {
-        throw std::invalid_argument("The response cannot be empty");
+    : n_features_(n_features),
+      options_(options)
+{
+    if (n_features_ == 0) {
+        throw std::invalid_argument(
+            "The number of features cannot be zero"
+        );
     }
 
-    if (X.size() != n_samples * n_features_) {
+    if (!std::isfinite(options_.l2_penalty) ||
+        options_.l2_penalty < 0.0) {
+        throw std::invalid_argument(
+            "The L2 penalty must be finite and non-negative"
+        );
+    }
+
+    if (!std::isfinite(options_.svd_rcond) ||
+        options_.svd_rcond < 0.0) {
+        throw std::invalid_argument(
+            "The SVD relative tolerance must be finite and non-negative"
+        );
+    }
+
+    reset();
+}
+
+std::size_t LinearRegression::parameter_count() const noexcept
+{
+    return n_features_ +
+           static_cast<std::size_t>(options_.fit_intercept);
+}
+
+void LinearRegression::make_design_row(
+    std::span<const double> x,
+    std::span<double> row
+) const
+{
+    if (x.size() != n_features_) {
         throw std::invalid_argument("Incompatible dimensions");
     }
 
-    solution_is_current_ = false;
+    if (row.size() != parameter_count()) {
+        throw std::invalid_argument("Invalid design-row dimension");
+    }
 
-    const std::size_t n_coeff =
-        n_features_ + (options_.fit_intercept ? 1 : 0);
+    for (std::size_t j = 0; j < n_features_; ++j) {
+        row[j] = x[j];
+    }
 
-    // Only the lower triangle of the Gram matrix is populated.
-    std::vector<double> gram_matrix(n_coeff * n_coeff, 0.0);
-    std::vector<double> feature_sums(n_features_, 0.0);
-    std::vector<double> normal_equation_rhs(n_coeff, 0.0);
-    
+    if (options_.fit_intercept) {
+        row[n_features_] = 1.0;
+    }
+}
+
+void LinearRegression::fit(
+    std::span<const double> X,
+    std::span<const double> y
+)
+{
+    const std::size_t n_samples = y.size();
+
+    if (n_samples == 0) {
+        throw std::invalid_argument(
+            "The response cannot be empty"
+        );
+    }
+
+    if (X.size() != n_samples * n_features_) {
+        throw std::invalid_argument(
+            "Incompatible dimensions"
+        );
+    }
+
+    for (double value : X) {
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument(
+                "Input contains non-finite values"
+            );
+        }
+    }
+
+    for (double value : y) {
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument(
+                "Response contains non-finite values"
+            );
+        }
+    }
+
+    reset();
+
+    /*
+     * For the SVD backend, accumulate the compact QR
+     * representation one observation at a time.
+     */
+    if (options_.solver == LinearRegressionSolver::svd) {
+        batch_update(X, y);
+        return;
+    }
+
+    /*
+     * Cholesky backend: directly construct the lower
+     * triangle of X^T X and X^T y.
+     */
+    const std::size_t n_coeff = parameter_count();
+
+    std::vector<double> gram_matrix(
+        n_coeff * n_coeff,
+        0.0
+    );
+
+    std::vector<double> feature_sums(
+        n_features_,
+        0.0
+    );
+
+    std::vector<double> normal_equation_rhs(
+        n_coeff,
+        0.0
+    );
 
     double response_sum = 0.0;
     double sum_of_squares = 0.0;
@@ -68,15 +165,21 @@ namespace hdos {
         normal_equation_rhs[k] = cross_product;
         feature_sums[k] = feature_sum;
 
-        // Complete column k below the diagonal.
-        for (std::size_t j = k + 1; j < n_features_; ++j) {
+        for (
+            std::size_t j = k + 1;
+            j < n_features_;
+            ++j
+        ) {
             const std::size_t j_offset = j * n_samples;
             double cross = 0.0;
 
             for (std::size_t i = 0; i < n_samples; ++i) {
-                cross += X[j_offset + i] * X[k_offset + i];
+                cross +=
+                    X[j_offset + i] *
+                    X[k_offset + i];
             }
 
+            // Row j, column k in column-major storage.
             gram_matrix[j + k * n_coeff] = cross;
         }
     }
@@ -85,88 +188,186 @@ namespace hdos {
         const std::size_t intercept = n_features_;
 
         for (std::size_t k = 0; k < n_features_; ++k) {
-            gram_matrix[intercept + k * n_coeff] =
-                feature_sums[k];
+            gram_matrix[
+                intercept + k * n_coeff
+            ] = feature_sums[k];
         }
 
-        gram_matrix[intercept + intercept * n_coeff] =
-            static_cast<double>(n_samples);
+        gram_matrix[
+            intercept + intercept * n_coeff
+        ] = static_cast<double>(n_samples);
 
         normal_equation_rhs[intercept] = response_sum;
     }
-    
+
+    // Do not regularise the intercept.
     for (std::size_t j = 0; j < n_features_; ++j) {
-        gram_matrix[j + j * n_coeff] += options_.l2_penalty;
+        gram_matrix[j + j * n_coeff] +=
+            options_.l2_penalty;
     }
-    std::vector<double> root_variance = detail::cholesky_decomp(gram_matrix);
-    root_variance_ = std::move(root_variance);
-    sum_of_squares = sum_of_squares;
-    normal_equation_rhs_ = normal_equation_rhs;
+
+    root_variance_ =
+        detail::cholesky_decomp(gram_matrix);
+
+    normal_equation_rhs_ =
+        std::move(normal_equation_rhs);
+
+    sum_of_squares_ = sum_of_squares;
     n_observations_ = n_samples;
-};
-
-void LinearRegression::solve_if_needed()
-{
-    if (solution_is_current_) {
-        return;
-    }
-
-    if (n_observations_ == 0) {
-        throw std::logic_error("The model has not been fitted");
-    }
-
-    std::vector<double> solution =
-        detail::solve_pos_definite_cholesky(
-            root_variance_,
-            normal_equation_rhs_
-        );
-
-    if (options_.fit_intercept) {
-        intercept_ = solution.back();
-        solution.pop_back();
-    } else {
-        intercept_ = 0.0;
-    }
-
-    coefficients_ = std::move(solution);
-    solution_is_current_ = true;
+    solution_is_current_ = false;
 }
 
-
-
-void LinearRegression::rk1_update(
-    std::span<const double> x,
-    const double y)
+void LinearRegression::update_cholesky_state(
+    std::span<const double> row,
+    double y
+)
 {
-    if (x.size() != n_features_) {
+    if (row.size() != parameter_count()) {
         throw std::invalid_argument(
-            "Incompatible dimensions");
+            "Invalid design-row dimension"
+        );
     }
 
-    for (double value : x) {
-    if (!std::isfinite(value)) {
-        throw std::invalid_argument("Input contains non-finite values");
-    }
-}
-
+    /*
+     * rk1_cholesky expects only the original features.
+     * It adds the intercept coordinate internally when
+     * fit_intercept is true.
+     */
     detail::rk1_cholesky(
         root_variance_,
-        x,
+        row.first(n_features_),
         1.0,
         options_.fit_intercept
     );
 
-    // Update X^T y.
-    for (std::size_t j = 0; j < n_features_; ++j) {
-        normal_equation_rhs_[j] += x[j] * y;
+    for (std::size_t j = 0; j < parameter_count(); ++j) {
+        normal_equation_rhs_[j] += row[j] * y;
+    }
+}
+
+void LinearRegression::update_qr_state(
+    std::span<const double> row,
+    double y
+)
+{
+    const std::size_t dimension = parameter_count();
+
+    if (row.size() != dimension) {
+        throw std::invalid_argument(
+            "Invalid design-row dimension"
+        );
     }
 
-    // The intercept is the final system coordinate.
-    if (options_.fit_intercept) {
-        normal_equation_rhs_[n_features_] += y;
+    /*
+     * Triangularise
+     *
+     *      [ R ]
+     *      [a^T]
+     *
+     * with Givens rotations. Apply the same rotations to
+     *
+     *      [ Q^T y ]
+     *      [   y   ].
+     */
+    std::vector<double> work_row(
+        row.begin(),
+        row.end()
+    );
+
+    double work_response = y;
+
+    for (std::size_t j = 0; j < dimension; ++j) {
+        const double upper =
+            qr_factor_[j + j * dimension];
+
+        const double lower = work_row[j];
+
+        if (lower == 0.0) {
+            continue;
+        }
+
+        const double radius = std::hypot(upper, lower);
+
+        if (radius == 0.0) {
+            continue;
+        }
+
+        const double cosine = upper / radius;
+        const double sine = lower / radius;
+
+        for (
+            std::size_t column = j;
+            column < dimension;
+            ++column
+        ) {
+            const std::size_t index =
+                j + column * dimension;
+
+            const double top = qr_factor_[index];
+            const double bottom = work_row[column];
+
+            qr_factor_[index] =
+                cosine * top + sine * bottom;
+
+            work_row[column] =
+                -sine * top + cosine * bottom;
+        }
+
+        work_row[j] = 0.0;
+
+        const double top_response = qr_rhs_[j];
+
+        qr_rhs_[j] =
+            cosine * top_response +
+            sine * work_response;
+
+        work_response =
+            -sine * top_response +
+            cosine * work_response;
     }
 
-    // Update y^T y.
+    /*
+     * work_response is the new component of the residual.
+     * It is irrelevant to the least-squares minimiser and
+     * therefore need not be stored.
+     */
+}
+
+void LinearRegression::rk1_update(
+    std::span<const double> x,
+    double y
+)
+{
+    if (x.size() != n_features_) {
+        throw std::invalid_argument(
+            "Incompatible dimensions"
+        );
+    }
+
+    for (double value : x) {
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument(
+                "Input contains non-finite values"
+            );
+        }
+    }
+
+    if (!std::isfinite(y)) {
+        throw std::invalid_argument(
+            "Response contains a non-finite value"
+        );
+    }
+
+    std::vector<double> row(parameter_count());
+    make_design_row(x, row);
+
+    if (options_.solver ==
+        LinearRegressionSolver::cholesky) {
+        update_cholesky_state(row, y);
+    } else {
+        update_qr_state(row, y);
+    }
+
     sum_of_squares_ += y * y;
 
     ++n_observations_;
@@ -175,87 +376,325 @@ void LinearRegression::rk1_update(
 
 void LinearRegression::batch_update(
     std::span<const double> X,
-    std::span<const double> y)
+    std::span<const double> y
+)
 {
     const std::size_t n_samples = y.size();
 
     if (n_samples == 0) {
         throw std::invalid_argument(
-            "The response cannot be empty");
+            "The response cannot be empty"
+        );
     }
 
     if (X.size() != n_samples * n_features_) {
         throw std::invalid_argument(
-            "Incompatible dimensions");
+            "Incompatible dimensions"
+        );
     }
 
-    // Allocated only once for the entire batch.
     std::vector<double> observation(n_features_);
 
-    for (std::size_t k = 0; k < n_samples; ++k) {
+    for (std::size_t i = 0; i < n_samples; ++i) {
         for (std::size_t j = 0; j < n_features_; ++j) {
-            // Row k, column j in column-major storage.
-            observation[j] = X[k + j * n_samples];
+            // Row i, column j in column-major storage.
+            observation[j] =
+                X[i + j * n_samples];
         }
 
-        rk1_update(observation, y[k]);
+        rk1_update(observation, y[i]);
     }
 }
 
-double LinearRegression::predict(std::span<const double> x){
-    
-    if (x.size() != n_features_){
-        throw std::invalid_argument("Incompatible dimension");
+void LinearRegression::unpack_solution(
+    std::span<const double> solution
+)
+{
+    if (solution.size() != parameter_count()) {
+        throw std::logic_error(
+            "Invalid linear-system solution dimension"
+        );
     }
 
-    double out = intercept_;
-    for (std::size_t k=0; k <  n_features_; ++k){
-        out += x[k] * coefficients_[k];
-    }
+    coefficients_.assign(
+        solution.begin(),
+        solution.begin() + n_features_
+    );
 
-    return  out;
+    if (options_.fit_intercept) {
+        intercept_ = solution[n_features_];
+    } else {
+        intercept_ = 0.0;
+    }
 }
 
-const std::vector<double>& LinearRegression::coefficients(){
+void LinearRegression::solve_cholesky()
+{
+    const std::vector<double> solution =
+        detail::solve_pos_definite_cholesky(
+            root_variance_,
+            normal_equation_rhs_
+        );
+
+    unpack_solution(solution);
+}
+
+void LinearRegression::solve_svd()
+{
+    const std::size_t dimension = parameter_count();
+
+    /*
+     * For ridge regression, solve
+     *
+     *      [ R             ] beta ≈ [Q^T y]
+     *      [sqrt(lambda) D ]        [  0  ]
+     *
+     * where D has ones on the feature coordinates and
+     * zero on the intercept coordinate.
+     */
+    const std::size_t penalty_rows =
+        options_.l2_penalty > 0.0
+            ? n_features_
+            : 0;
+
+    const std::size_t system_rows =
+        dimension + penalty_rows;
+
+    std::vector<double> system(
+        system_rows * dimension,
+        0.0
+    );
+
+    std::vector<double> rhs(
+        system_rows,
+        0.0
+    );
+
+    for (std::size_t column = 0;
+         column < dimension;
+         ++column) {
+        for (std::size_t row = 0;
+             row < dimension;
+             ++row) {
+            system[row + column * system_rows] =
+                qr_factor_[
+                    row + column * dimension
+                ];
+        }
+    }
+
+    for (std::size_t row = 0; row < dimension; ++row) {
+        rhs[row] = qr_rhs_[row];
+    }
+
+    if (options_.l2_penalty > 0.0) {
+        const double ridge_scale =
+            std::sqrt(options_.l2_penalty);
+
+        for (std::size_t j = 0; j < n_features_; ++j) {
+            system[
+                (dimension + j) +
+                j * system_rows
+            ] = ridge_scale;
+        }
+    }
+
+    const auto decomposition = detail::jacobi_svd(
+        std::span<const double>(system),
+        system_rows,
+        dimension
+    );
+
+    double largest_singular_value = 0.0;
+
+    for (double singular_value :
+         decomposition.singular_values) {
+        largest_singular_value = std::max(
+            largest_singular_value,
+            singular_value
+        );
+    }
+
+    double relative_tolerance = options_.svd_rcond;
+
+    if (relative_tolerance == 0.0) {
+        const std::size_t scale_dimension =
+            std::max(n_observations_, dimension);
+
+        relative_tolerance =
+            std::numeric_limits<double>::epsilon() *
+            static_cast<double>(scale_dimension);
+    }
+
+    const double cutoff =
+        relative_tolerance * largest_singular_value;
+
+    // Compute U^T rhs.
+    std::vector<double> projected_rhs(
+        dimension,
+        0.0
+    );
+
+    for (std::size_t j = 0; j < dimension; ++j) {
+        double value = 0.0;
+
+        for (std::size_t i = 0; i < system_rows; ++i) {
+            value +=
+                decomposition.U[
+                    i + j * system_rows
+                ] * rhs[i];
+        }
+
+        if (decomposition.singular_values[j] > cutoff) {
+            projected_rhs[j] =
+                value /
+                decomposition.singular_values[j];
+        }
+    }
+
+    // Compute V Sigma^+ U^T rhs.
+    std::vector<double> solution(
+        dimension,
+        0.0
+    );
+
+    for (std::size_t i = 0; i < dimension; ++i) {
+        for (std::size_t j = 0; j < dimension; ++j) {
+            solution[i] +=
+                decomposition.V[
+                    i + j * dimension
+                ] * projected_rhs[j];
+        }
+    }
+
+    unpack_solution(solution);
+}
+
+void LinearRegression::solve_if_needed()
+{
+    if (solution_is_current_) {
+        return;
+    }
+
+    if (n_observations_ == 0) {
+        throw std::logic_error(
+            "The model has not been fitted"
+        );
+    }
+
+    if (options_.solver ==
+        LinearRegressionSolver::cholesky) {
+        solve_cholesky();
+    } else {
+        solve_svd();
+    }
+
+    solution_is_current_ = true;
+}
+
+double LinearRegression::predict(
+    std::span<const double> x
+)
+{
+    if (x.size() != n_features_) {
+        throw std::invalid_argument(
+            "Incompatible dimensions"
+        );
+    }
+
+    for (double value : x) {
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument(
+                "Input contains non-finite values"
+            );
+        }
+    }
+
+    solve_if_needed();
+
+    double output = intercept_;
+
+    for (std::size_t j = 0; j < n_features_; ++j) {
+        output += x[j] * coefficients_[j];
+    }
+
+    return output;
+}
+
+const std::vector<double>&
+LinearRegression::coefficients()
+{
     solve_if_needed();
     return coefficients_;
 }
 
-double LinearRegression::intercept(){
+double LinearRegression::intercept()
+{
     solve_if_needed();
     return intercept_;
 }
 
-std::size_t LinearRegression::n_features() const noexcept{
+std::size_t
+LinearRegression::n_features() const noexcept
+{
     return n_features_;
 }
 
-std::size_t LinearRegression::n_observations() const noexcept{
+std::size_t
+LinearRegression::n_observations() const noexcept
+{
     return n_observations_;
 }
 
 void LinearRegression::reset()
 {
+    const std::size_t dimension = parameter_count();
+
     n_observations_ = 0;
     sum_of_squares_ = 0.0;
 
-    std::fill(
-        normal_equation_rhs_.begin(),
-        normal_equation_rhs_.end(),
+    root_variance_.assign(
+        dimension * dimension,
         0.0
     );
 
-    std::fill(
-        root_variance_.begin(),
-        root_variance_.end(),
+    normal_equation_rhs_.assign(
+        dimension,
         0.0
     );
 
-    const std::size_t n_coef =
-        n_features_ + (options_.fit_intercept ? 1 : 0);
+    qr_factor_.assign(
+        dimension * dimension,
+        0.0
+    );
 
-    std::fill(coefficients_.begin(), coefficients_.end(), 0.0);
+    qr_rhs_.assign(
+        dimension,
+        0.0
+    );
+
+    /*
+     * The Cholesky factor initially represents the ridge
+     * matrix. The intercept remains unregularised.
+     */
+    if (options_.l2_penalty > 0.0) {
+        const double ridge_scale =
+            std::sqrt(options_.l2_penalty);
+
+        for (std::size_t j = 0; j < n_features_; ++j) {
+            root_variance_[
+                j + j * dimension
+            ] = ridge_scale;
+        }
+    }
+
+    coefficients_.assign(
+        n_features_,
+        0.0
+    );
+
     intercept_ = 0.0;
     solution_is_current_ = false;
 }
-}
+
+} 

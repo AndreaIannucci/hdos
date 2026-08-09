@@ -2,7 +2,7 @@ add_executable(
     hdos_tests
     # test_cholesky.cpp
     # test_triangular_solver.cpp
-    # test_linear_regression.cpp
+    test_linear_regression.cpp
     # test_householder.cpp
     # test_householder_left.cpp
     # test_householder_right.cpp
@@ -13,8 +13,8 @@ add_executable(
     # test_wide_SVD.cpp
     # test_pca.cpp
     # test_pca_2.cpp
-    test_running_mean.cpp
-    test_running_variance.cpp
+    # test_running_mean.cpp
+    # test_running_variance.cpp
     )
 
 target_link_libraries(

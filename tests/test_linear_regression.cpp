@@ -1,138 +1,521 @@
-
 #include <gtest/gtest.h>
 
 #include "hdos/linear_regression.hpp"
 
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
-TEST(LinearRegression, RecoversExactModelWithIntercept)
+namespace {
+
+using hdos::LinearRegression;
+using hdos::LinearRegressionOptions;
+using hdos::LinearRegressionSolver;
+
+constexpr double tolerance = 1e-9;
+
+/*
+ * Convert a matrix given as rows into the column-major
+ * representation expected by LinearRegression.
+ */
+std::vector<double> to_column_major(
+    const std::vector<std::vector<double>>& rows
+)
 {
-    hdos::LinearRegressionOptions options;
-    options.fit_intercept = true;
+    if (rows.empty()) {
+        return {};
+    }
 
-    hdos::LinearRegression model(2, options);
+    const std::size_t n_rows = rows.size();
+    const std::size_t n_columns = rows.front().size();
 
-    // Rows:
-    //
-    // [0  1]
-    // [1  0]
-    // [2  1]
-    // [3  2]
-    //
-    // Stored column-major.
+    for (const auto& row : rows) {
+        if (row.size() != n_columns) {
+            throw std::invalid_argument(
+                "Rows have incompatible dimensions"
+            );
+        }
+    }
+
+    std::vector<double> output(
+        n_rows * n_columns,
+        0.0
+    );
+
+    for (std::size_t i = 0; i < n_rows; ++i) {
+        for (std::size_t j = 0; j < n_columns; ++j) {
+            output[i + j * n_rows] = rows[i][j];
+        }
+    }
+
+    return output;
+}
+
+LinearRegressionOptions make_options(
+    LinearRegressionSolver solver,
+    bool fit_intercept = true,
+    double l2_penalty = 0.0,
+    double svd_rcond = 0.0
+)
+{
+    LinearRegressionOptions options;
+
+    options.fit_intercept = fit_intercept;
+    options.l2_penalty = l2_penalty;
+    options.solver = solver;
+    options.svd_rcond = svd_rcond;
+
+    return options;
+}
+
+void expect_coefficients_near(
+    LinearRegression& model,
+    const std::vector<double>& expected,
+    double expected_intercept,
+    double error = tolerance
+)
+{
+    const auto& coefficients = model.coefficients();
+
+    ASSERT_EQ(coefficients.size(), expected.size());
+
+    for (std::size_t j = 0; j < expected.size(); ++j) {
+        EXPECT_NEAR(
+            coefficients[j],
+            expected[j],
+            error
+        ) << "Coefficient " << j << " differs";
+    }
+
+    EXPECT_NEAR(
+        model.intercept(),
+        expected_intercept,
+        error
+    );
+}
+
+class LinearRegressionSolverTest
+    : public ::testing::TestWithParam<
+          LinearRegressionSolver
+      > {
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    AllSolvers,
+    LinearRegressionSolverTest,
+    ::testing::Values(
+        LinearRegressionSolver::cholesky,
+        LinearRegressionSolver::svd
+    ),
+    [](
+        const ::testing::TestParamInfo<
+            LinearRegressionSolver
+        >& information
+    ) {
+        if (
+            information.param ==
+            LinearRegressionSolver::cholesky
+        ) {
+            return "Cholesky";
+        }
+
+        return "SVD";
+    }
+);
+
+/*
+ * Constructor and options validation.
+ */
+
+TEST(LinearRegressionConstructorTest, RejectsZeroFeatures)
+{
+    EXPECT_THROW(
+        LinearRegression(0),
+        std::invalid_argument
+    );
+}
+
+TEST(LinearRegressionConstructorTest, RejectsNegativePenalty)
+{
+    LinearRegressionOptions options;
+    options.l2_penalty = -1.0;
+
+    EXPECT_THROW(
+        LinearRegression(2, options),
+        std::invalid_argument
+    );
+}
+
+TEST(LinearRegressionConstructorTest, RejectsNanPenalty)
+{
+    LinearRegressionOptions options;
+    options.l2_penalty =
+        std::numeric_limits<double>::quiet_NaN();
+
+    EXPECT_THROW(
+        LinearRegression(2, options),
+        std::invalid_argument
+    );
+}
+
+TEST(LinearRegressionConstructorTest, RejectsInfinitePenalty)
+{
+    LinearRegressionOptions options;
+    options.l2_penalty =
+        std::numeric_limits<double>::infinity();
+
+    EXPECT_THROW(
+        LinearRegression(2, options),
+        std::invalid_argument
+    );
+}
+
+TEST(LinearRegressionConstructorTest, RejectsNegativeSvdTolerance)
+{
+    LinearRegressionOptions options;
+    options.svd_rcond = -1e-8;
+
+    EXPECT_THROW(
+        LinearRegression(2, options),
+        std::invalid_argument
+    );
+}
+
+TEST(LinearRegressionConstructorTest, RejectsNanSvdTolerance)
+{
+    LinearRegressionOptions options;
+    options.svd_rcond =
+        std::numeric_limits<double>::quiet_NaN();
+
+    EXPECT_THROW(
+        LinearRegression(2, options),
+        std::invalid_argument
+    );
+}
+
+TEST(LinearRegressionConstructorTest, ExposesModelDimensions)
+{
+    LinearRegression model(4);
+
+    EXPECT_EQ(model.n_features(), 4);
+    EXPECT_EQ(model.n_observations(), 0);
+}
+
+/*
+ * Basic exact regression tests.
+ */
+
+TEST_P(LinearRegressionSolverTest, FitsExactLineWithIntercept)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
+
+    // y = 1 + 2x.
     const std::vector<double> X{
-        0.0, 1.0, 2.0, 3.0,
-        1.0, 0.0, 1.0, 2.0
+        0.0,
+        1.0,
+        2.0,
+        3.0
     };
 
-    // y = 3 + 2*x_1 - x_2.
     const std::vector<double> y{
-        2.0, 5.0, 6.0, 7.0
+        1.0,
+        3.0,
+        5.0,
+        7.0
     };
 
     model.fit(X, y);
 
-    const std::vector<double>& coefficients =
-        model.coefficients();
+    EXPECT_EQ(model.n_observations(), 4);
 
-    ASSERT_EQ(coefficients.size(), 2U);
-    EXPECT_NEAR(coefficients[0],  2.0, 1e-10);
-    EXPECT_NEAR(coefficients[1], -1.0, 1e-10);
-    EXPECT_NEAR(model.intercept(), 3.0, 1e-10);
+    expect_coefficients_near(
+        model,
+        {2.0},
+        1.0
+    );
+
+    const std::array<double, 1> input{4.0};
+
+    EXPECT_NEAR(
+        model.predict(input),
+        9.0,
+        tolerance
+    );
 }
 
-TEST(LinearRegression, RecoversExactModelWithoutIntercept)
+TEST_P(LinearRegressionSolverTest, FitsExactLineWithoutIntercept)
 {
-    hdos::LinearRegressionOptions options;
-    options.fit_intercept = false;
+    const auto solver = GetParam();
 
-    hdos::LinearRegression model(2, options);
+    LinearRegression model(
+        1,
+        make_options(
+            solver,
+            false
+        )
+    );
 
+    // y = 3x.
     const std::vector<double> X{
-        0.0, 1.0, 2.0, 3.0,
-        1.0, 0.0, 1.0, 2.0
+        1.0,
+        2.0,
+        3.0,
+        4.0
     };
 
-    // y = 2*x_1 - x_2.
     const std::vector<double> y{
-        -1.0, 2.0, 3.0, 4.0
+        3.0,
+        6.0,
+        9.0,
+        12.0
     };
 
     model.fit(X, y);
 
-    const std::vector<double>& coefficients =
-        model.coefficients();
+    expect_coefficients_near(
+        model,
+        {3.0},
+        0.0
+    );
 
-    ASSERT_EQ(coefficients.size(), 2U);
-    EXPECT_NEAR(coefficients[0],  2.0, 1e-10);
-    EXPECT_NEAR(coefficients[1], -1.0, 1e-10);
-    EXPECT_NEAR(model.intercept(), 0.0, 1e-10);
+    const std::array<double, 1> input{5.0};
+
+    EXPECT_NEAR(
+        model.predict(input),
+        15.0,
+        tolerance
+    );
 }
 
-
-
-TEST(LinearRegression, RecoversLeastSquaresFitWithNoise)
+TEST_P(LinearRegressionSolverTest, FitsMultipleFeaturesWithIntercept)
 {
-    hdos::LinearRegression model(1);
+    const auto solver = GetParam();
 
-    const std::vector<double> X{
-        -2.0, -1.0, 0.0, 1.0, 2.0
-    };
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
 
-    // OLS slope = 2 and intercept = 1, despite the residual noise.
+    /*
+     * y = 1 + 2x1 - 3x2.
+     */
+    const std::vector<double> X = to_column_major({
+        {0.0,  0.0},
+        {1.0,  0.0},
+        {0.0,  1.0},
+        {1.0,  1.0},
+        {2.0, -1.0}
+    });
+
     const std::vector<double> y{
-        -2.0, -2.0, 1.0, 2.0, 6.0
+         1.0,
+         3.0,
+        -2.0,
+         0.0,
+         8.0
     };
 
     model.fit(X, y);
 
-    // Calling intercept first also tests that either accessor
-    // can trigger the lazy solution.
-    EXPECT_NEAR(model.intercept(), 1.0, 1e-10);
+    expect_coefficients_near(
+        model,
+        {2.0, -3.0},
+        1.0
+    );
 
-    const std::vector<double>& coefficients =
-        model.coefficients();
+    const std::array<double, 2> input{
+        3.0,
+        2.0
+    };
 
-    ASSERT_EQ(coefficients.size(), 1U);
-    EXPECT_NEAR(coefficients[0], 2.0, 1e-10);
+    EXPECT_NEAR(
+        model.predict(input),
+        1.0,
+        tolerance
+    );
 }
 
-TEST(LinearRegression, RefitInvalidatesPreviousSolution)
+TEST_P(LinearRegressionSolverTest, FitsMultipleFeaturesWithoutIntercept)
 {
-    hdos::LinearRegressionOptions options;
-    options.fit_intercept = false;
+    const auto solver = GetParam();
 
-    hdos::LinearRegression model(1, options);
+    LinearRegression model(
+        2,
+        make_options(
+            solver,
+            false
+        )
+    );
 
+    /*
+     * y = 2x1 - 3x2.
+     */
+    const std::vector<double> X = to_column_major({
+        { 1.0, 0.0},
+        { 0.0, 1.0},
+        { 1.0, 1.0},
+        {-1.0, 2.0}
+    });
+
+    const std::vector<double> y{
+         2.0,
+        -3.0,
+        -1.0,
+        -8.0
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {2.0, -3.0},
+        0.0
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, UsesColumnMajorInput)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    /*
+     * Rows:
+     *
+     *     (1, 10)
+     *     (2, 20)
+     *     (4, 10)
+     *     (5, 30)
+     *
+     * y = 4 + 3x1 - 2x2.
+     */
     const std::vector<double> X{
-        1.0, 2.0, 3.0, 4.0
+        1.0, 2.0, 4.0, 5.0,
+        10.0, 20.0, 10.0, 30.0
+    };
+
+    const std::vector<double> y{
+        -13.0,
+        -30.0,
+         -4.0,
+        -41.0
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {3.0, -2.0},
+        4.0,
+        1e-8
+    );
+}
+
+/*
+ * State replacement, reset and lazy solution tests.
+ */
+
+TEST_P(LinearRegressionSolverTest, FitReplacesPreviousState)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
+
+    const std::vector<double> first_X{
+        0.0,
+        1.0,
+        2.0
     };
 
     const std::vector<double> first_y{
-        2.0, 4.0, 6.0, 8.0
+        1.0,
+        3.0,
+        5.0
     };
 
-    model.fit(X, first_y);
+    model.fit(first_X, first_y);
 
-    ASSERT_EQ(model.coefficients().size(), 1U);
-    EXPECT_NEAR(model.coefficients()[0], 2.0, 1e-10);
+    expect_coefficients_near(
+        model,
+        {2.0},
+        1.0
+    );
+
+    // y = -2 + 0.5x.
+    const std::vector<double> second_X{
+        -2.0,
+        -1.0,
+         1.0,
+         3.0
+    };
 
     const std::vector<double> second_y{
-        -1.0, -2.0, -3.0, -4.0
+        -3.0,
+        -2.5,
+        -1.5,
+        -0.5
     };
 
-    model.fit(X, second_y);
+    model.fit(second_X, second_y);
 
-    ASSERT_EQ(model.coefficients().size(), 1U);
-    EXPECT_NEAR(model.coefficients()[0], -1.0, 1e-10);
+    EXPECT_EQ(model.n_observations(), 4);
+
+    expect_coefficients_near(
+        model,
+        {0.5},
+        -2.0
+    );
 }
 
-
-TEST(LinearRegression, RejectsCoefficientAccessBeforeFit)
+TEST_P(LinearRegressionSolverTest, ResetClearsModelState)
 {
-    hdos::LinearRegression model(2);
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
+
+    const std::vector<double> X{
+        0.0,
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> y{
+        1.0,
+        3.0,
+        5.0
+    };
+
+    model.fit(X, y);
+
+    EXPECT_EQ(model.n_observations(), 3);
+
+    // Force the lazy solution to be computed.
+    EXPECT_NEAR(
+        model.coefficients()[0],
+        2.0,
+        tolerance
+    );
+
+    model.reset();
+
+    EXPECT_EQ(model.n_observations(), 0);
 
     EXPECT_THROW(
         model.coefficients(),
@@ -143,26 +526,781 @@ TEST(LinearRegression, RejectsCoefficientAccessBeforeFit)
         model.intercept(),
         std::logic_error
     );
+
+    const std::array<double, 1> input{1.0};
+
+    EXPECT_THROW(
+        model.predict(input),
+        std::logic_error
+    );
 }
 
-TEST(LinearRegression, RejectsRankDeficientDesign)
+TEST_P(LinearRegressionSolverTest, CanFitAgainAfterReset)
 {
-    hdos::LinearRegressionOptions options;
-    options.fit_intercept = false;
+    const auto solver = GetParam();
 
-    hdos::LinearRegression model(2, options);
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
 
-    // Two identical columns:
-    //
-    // [1  1]
-    // [0  0]
+    const std::vector<double> first_X{
+        0.0,
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> first_y{
+        1.0,
+        3.0,
+        5.0
+    };
+
+    model.fit(first_X, first_y);
+    model.reset();
+
+    const std::vector<double> second_X{
+        0.0,
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> second_y{
+        -1.0,
+         2.0,
+         5.0
+    };
+
+    model.fit(second_X, second_y);
+
+    expect_coefficients_near(
+        model,
+        {3.0},
+        -1.0
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, PredictTriggersLazySolution)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
+
     const std::vector<double> X{
-        1.0, 0.0,
-        1.0, 0.0
+        0.0,
+        1.0,
+        2.0
     };
 
     const std::vector<double> y{
-        1.0, 0.0
+        1.0,
+        3.0,
+        5.0
+    };
+
+    model.fit(X, y);
+
+    const std::array<double, 1> input{3.0};
+
+    EXPECT_NEAR(
+        model.predict(input),
+        7.0,
+        tolerance
+    );
+}
+
+/*
+ * Online update tests.
+ */
+
+TEST_P(LinearRegressionSolverTest, RankOneUpdatesMatchCompleteRefit)
+{
+    const auto solver = GetParam();
+
+    LinearRegression updated_model(
+        2,
+        make_options(solver)
+    );
+
+    LinearRegression reference_model(
+        2,
+        make_options(solver)
+    );
+
+    /*
+     * The first three observations already provide a
+     * full-rank system.
+     */
+    const std::vector<double> initial_X = to_column_major({
+        {0.0, 0.0},
+        {1.0, 0.0},
+        {0.0, 1.0}
+    });
+
+    const std::vector<double> initial_y{
+         1.0,
+         3.0,
+        -2.0
+    };
+
+    updated_model.fit(initial_X, initial_y);
+
+    const std::array<double, 2> fourth_x{
+        1.0,
+        1.0
+    };
+
+    const std::array<double, 2> fifth_x{
+         2.0,
+        -1.0
+    };
+
+    updated_model.rk1_update(fourth_x, 0.0);
+    updated_model.rk1_update(fifth_x, 8.0);
+
+    const std::vector<double> complete_X = to_column_major({
+        {0.0,  0.0},
+        {1.0,  0.0},
+        {0.0,  1.0},
+        {1.0,  1.0},
+        {2.0, -1.0}
+    });
+
+    const std::vector<double> complete_y{
+         1.0,
+         3.0,
+        -2.0,
+         0.0,
+         8.0
+    };
+
+    reference_model.fit(
+        complete_X,
+        complete_y
+    );
+
+    EXPECT_EQ(
+        updated_model.n_observations(),
+        5
+    );
+
+    const auto& updated_coefficients =
+        updated_model.coefficients();
+
+    const auto& reference_coefficients =
+        reference_model.coefficients();
+
+    ASSERT_EQ(
+        updated_coefficients.size(),
+        reference_coefficients.size()
+    );
+
+    for (
+        std::size_t j = 0;
+        j < updated_coefficients.size();
+        ++j
+    ) {
+        EXPECT_NEAR(
+            updated_coefficients[j],
+            reference_coefficients[j],
+            tolerance
+        );
+    }
+
+    EXPECT_NEAR(
+        updated_model.intercept(),
+        reference_model.intercept(),
+        tolerance
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, BatchUpdateMatchesRankOneUpdates)
+{
+    const auto solver = GetParam();
+
+    LinearRegression batch_model(
+        2,
+        make_options(solver)
+    );
+
+    LinearRegression sequential_model(
+        2,
+        make_options(solver)
+    );
+
+    const std::vector<double> initial_X = to_column_major({
+        {0.0, 0.0},
+        {1.0, 0.0},
+        {0.0, 1.0}
+    });
+
+    const std::vector<double> initial_y{
+         1.0,
+         3.0,
+        -2.0
+    };
+
+    batch_model.fit(initial_X, initial_y);
+    sequential_model.fit(initial_X, initial_y);
+
+    const std::vector<double> additional_X = to_column_major({
+        {1.0,  1.0},
+        {2.0, -1.0}
+    });
+
+    const std::vector<double> additional_y{
+        0.0,
+        8.0
+    };
+
+    batch_model.batch_update(
+        additional_X,
+        additional_y
+    );
+
+    const std::array<double, 2> first{
+        1.0,
+        1.0
+    };
+
+    const std::array<double, 2> second{
+         2.0,
+        -1.0
+    };
+
+    sequential_model.rk1_update(first, 0.0);
+    sequential_model.rk1_update(second, 8.0);
+
+    const auto& batch_coefficients =
+        batch_model.coefficients();
+
+    const auto& sequential_coefficients =
+        sequential_model.coefficients();
+
+    ASSERT_EQ(
+        batch_coefficients.size(),
+        sequential_coefficients.size()
+    );
+
+    for (
+        std::size_t j = 0;
+        j < batch_coefficients.size();
+        ++j
+    ) {
+        EXPECT_NEAR(
+            batch_coefficients[j],
+            sequential_coefficients[j],
+            tolerance
+        );
+    }
+
+    EXPECT_NEAR(
+        batch_model.intercept(),
+        sequential_model.intercept(),
+        tolerance
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, SolutionIsRefreshedAfterUpdate)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
+
+    const std::vector<double> X{
+        0.0,
+        1.0
+    };
+
+    const std::vector<double> y{
+        0.0,
+        1.0
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {1.0},
+        0.0
+    );
+
+    const std::array<double, 1> new_x{2.0};
+    model.rk1_update(new_x, 4.0);
+
+    /*
+     * Least-squares fit through:
+     *
+     *     (0, 0), (1, 1), (2, 4)
+     *
+     * gives slope 2 and intercept -1/3.
+     */
+    expect_coefficients_near(
+        model,
+        {2.0},
+        -1.0 / 3.0
+    );
+}
+
+/*
+ * Ridge regression tests.
+ */
+
+TEST_P(LinearRegressionSolverTest, RidgeWithoutInterceptHasKnownSolution)
+{
+    const auto solver = GetParam();
+
+    /*
+     * beta =
+     *
+     *     sum x_i y_i
+     *     -----------
+     *     sum x_i^2 + lambda
+     *
+     * Here:
+     *
+     *     sum x_i y_i = 10,
+     *     sum x_i^2   = 5,
+     *     lambda      = 5,
+     *
+     * so beta = 1.
+     */
+    LinearRegression model(
+        1,
+        make_options(
+            solver,
+            false,
+            5.0
+        )
+    );
+
+    const std::vector<double> X{
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> y{
+        2.0,
+        4.0
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {1.0},
+        0.0
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, RidgeDoesNotPenalizeIntercept)
+{
+    const auto solver = GetParam();
+
+    /*
+     * x is centred and y = 5 + 2x.
+     *
+     * With lambda = 3:
+     *
+     *     beta = 4 / (2 + 3) = 0.8.
+     *
+     * The intercept remains equal to mean(y) = 5.
+     */
+    LinearRegression model(
+        1,
+        make_options(
+            solver,
+            true,
+            3.0
+        )
+    );
+
+    const std::vector<double> X{
+        -1.0,
+         0.0,
+         1.0
+    };
+
+    const std::vector<double> y{
+        3.0,
+        5.0,
+        7.0
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {0.8},
+        5.0
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    RidgeHandlesUnderdeterminedSystem
+)
+{
+    const auto solver = GetParam();
+
+    /*
+     * Minimise
+     *
+     *     (beta_1 + 2 beta_2 - 5)^2
+     *       + 5(beta_1^2 + beta_2^2).
+     *
+     * The solution is (0.5, 1.0).
+     */
+    LinearRegression model(
+        2,
+        make_options(
+            solver,
+            false,
+            5.0
+        )
+    );
+
+    // One row: (1, 2).
+    const std::vector<double> X{
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> y{
+        5.0
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {0.5, 1.0},
+        0.0
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    RidgeRankOneUpdatesMatchRefit
+)
+{
+    const auto solver = GetParam();
+
+    constexpr double penalty = 0.75;
+
+    LinearRegression updated_model(
+        2,
+        make_options(
+            solver,
+            true,
+            penalty
+        )
+    );
+
+    LinearRegression reference_model(
+        2,
+        make_options(
+            solver,
+            true,
+            penalty
+        )
+    );
+
+    const std::vector<double> initial_X = to_column_major({
+        {0.0, 0.0},
+        {1.0, 0.0},
+        {0.0, 1.0}
+    });
+
+    const std::vector<double> initial_y{
+         1.0,
+         3.0,
+        -2.0
+    };
+
+    updated_model.fit(initial_X, initial_y);
+
+    const std::array<double, 2> new_x{
+        1.0,
+        1.0
+    };
+
+    updated_model.rk1_update(new_x, 0.0);
+
+    const std::vector<double> complete_X = to_column_major({
+        {0.0, 0.0},
+        {1.0, 0.0},
+        {0.0, 1.0},
+        {1.0, 1.0}
+    });
+
+    const std::vector<double> complete_y{
+         1.0,
+         3.0,
+        -2.0,
+         0.0
+    };
+
+    reference_model.fit(
+        complete_X,
+        complete_y
+    );
+
+    const auto& updated_coefficients =
+        updated_model.coefficients();
+
+    const auto& reference_coefficients =
+        reference_model.coefficients();
+
+    ASSERT_EQ(
+        updated_coefficients.size(),
+        reference_coefficients.size()
+    );
+
+    for (
+        std::size_t j = 0;
+        j < updated_coefficients.size();
+        ++j
+    ) {
+        EXPECT_NEAR(
+            updated_coefficients[j],
+            reference_coefficients[j],
+            tolerance
+        );
+    }
+
+    EXPECT_NEAR(
+        updated_model.intercept(),
+        reference_model.intercept(),
+        tolerance
+    );
+}
+
+/*
+ * SVD-specific rank-deficient tests.
+ */
+
+TEST(LinearRegressionSvdTest, ComputesMinimumNormRankDeficientSolution)
+{
+    LinearRegression model(
+        2,
+        make_options(
+            LinearRegressionSolver::svd
+        )
+    );
+
+    /*
+     * x2 = 2x1 and y = 3x1.
+     *
+     * We require
+     *
+     *     beta_1 + 2 beta_2 = 3.
+     *
+     * The minimum-norm solution is
+     *
+     *     beta = 3(1,2) / 5
+     *          = (0.6, 1.2).
+     */
+    const std::vector<double> X = to_column_major({
+        {-1.0, -2.0},
+        { 0.0,  0.0},
+        { 1.0,  2.0}
+    });
+
+    const std::vector<double> y{
+        -3.0,
+         0.0,
+         3.0
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {0.6, 1.2},
+        0.0,
+        1e-8
+    );
+}
+
+TEST(LinearRegressionSvdTest, ComputesMinimumNormUnderdeterminedSolution)
+{
+    LinearRegression model(
+        2,
+        make_options(
+            LinearRegressionSolver::svd,
+            false
+        )
+    );
+
+    /*
+     * One equation:
+     *
+     *     beta_1 + 2 beta_2 = 5.
+     *
+     * The minimum-norm solution is (1,2).
+     */
+    const std::vector<double> X{
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> y{
+        5.0
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {1.0, 2.0},
+        0.0,
+        1e-8
+    );
+}
+
+TEST(LinearRegressionSvdTest, ReturnsZeroForZeroDesignMatrix)
+{
+    LinearRegression model(
+        2,
+        make_options(
+            LinearRegressionSolver::svd,
+            false
+        )
+    );
+
+    const std::vector<double> X{
+        0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0
+    };
+
+    const std::vector<double> y{
+         1.0,
+        -2.0,
+         3.0
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {0.0, 0.0},
+        0.0
+    );
+}
+
+TEST(LinearRegressionSvdTest, AppliesExplicitRankCutoff)
+{
+    LinearRegression model(
+        2,
+        make_options(
+            LinearRegressionSolver::svd,
+            false,
+            0.0,
+            1e-8
+        )
+    );
+
+    /*
+     * Diagonal design with singular values 1 and 1e-10.
+     * The second singular direction should be discarded.
+     */
+    const std::vector<double> X{
+        1.0, 0.0,
+        0.0, 1e-10
+    };
+
+    const std::vector<double> y{
+        1.0,
+        1e-10
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {1.0, 0.0},
+        0.0,
+        1e-8
+    );
+}
+
+TEST(LinearRegressionSvdTest, AutomaticCutoffKeepsResolvableDirection)
+{
+    LinearRegression model(
+        2,
+        make_options(
+            LinearRegressionSolver::svd,
+            false
+        )
+    );
+
+    const std::vector<double> X{
+        1.0, 0.0,
+        0.0, 1e-10
+    };
+
+    const std::vector<double> y{
+        1.0,
+        1e-10
+    };
+
+    model.fit(X, y);
+
+    expect_coefficients_near(
+        model,
+        {1.0, 1.0},
+        0.0,
+        1e-7
+    );
+}
+
+/*
+ * Input validation tests.
+ */
+
+TEST_P(LinearRegressionSolverTest, FitRejectsEmptyResponse)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    const std::vector<double> X;
+    const std::vector<double> y;
+
+    EXPECT_THROW(
+        model.fit(X, y),
+        std::invalid_argument
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, FitRejectsIncompatibleDimensions)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    const std::vector<double> X{
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> y{
+        1.0,
+        2.0
     };
 
     EXPECT_THROW(
@@ -171,304 +1309,303 @@ TEST(LinearRegression, RejectsRankDeficientDesign)
     );
 }
 
-
-
-
-TEST(LinearRegressionRankOneUpdate, MatchesRefitWithoutIntercept)
+TEST_P(LinearRegressionSolverTest, FitRejectsNanFeature)
 {
-    hdos::LinearRegressionOptions options;
-    options.fit_intercept = false;
+    const auto solver = GetParam();
 
-    hdos::LinearRegression incremental_model(2, options);
-    hdos::LinearRegression refitted_model(2, options);
-
-    // Initial observations:
-    //
-    // X = [1  0]
-    //     [0  1]
-    //
-    // y = [1, 2]
-    const std::vector<double> initial_X{
-        1.0, 0.0,
-        0.0, 1.0
-    };
-
-    const std::vector<double> initial_y{
-        1.0, 2.0
-    };
-
-    incremental_model.fit(initial_X, initial_y);
-
-    // Force the initial lazy solve.
-    const auto& initial_coefficients =
-        incremental_model.coefficients();
-
-    ASSERT_EQ(initial_coefficients.size(), 2U);
-    EXPECT_NEAR(initial_coefficients[0], 1.0, 1e-12);
-    EXPECT_NEAR(initial_coefficients[1], 2.0, 1e-12);
-
-    // Add x = [1,1], y = 6.
-    const std::vector<double> new_x{
-        1.0, 1.0
-    };
-
-    incremental_model.rk1_update(new_x, 6.0);
-
-    // Refit on all three observations.
-    //
-    // X = [1  0]
-    //     [0  1]
-    //     [1  1]
-    //
-    // Column-major storage:
-    const std::vector<double> complete_X{
-        1.0, 0.0, 1.0,
-        0.0, 1.0, 1.0
-    };
-
-    const std::vector<double> complete_y{
-        1.0, 2.0, 6.0
-    };
-
-    refitted_model.fit(complete_X, complete_y);
-
-    const auto& incremental_coefficients =
-        incremental_model.coefficients();
-
-    const auto& refitted_coefficients =
-        refitted_model.coefficients();
-
-    ASSERT_EQ(incremental_coefficients.size(), 2U);
-    ASSERT_EQ(refitted_coefficients.size(), 2U);
-
-    // The exact updated solution is [2,3].
-    EXPECT_NEAR(incremental_coefficients[0], 2.0, 1e-12);
-    EXPECT_NEAR(incremental_coefficients[1], 3.0, 1e-12);
-
-    EXPECT_NEAR(
-        incremental_coefficients[0],
-        refitted_coefficients[0],
-        1e-12
+    LinearRegression model(
+        1,
+        make_options(solver)
     );
 
-    EXPECT_NEAR(
-        incremental_coefficients[1],
-        refitted_coefficients[1],
-        1e-12
-    );
-
-    EXPECT_NEAR(incremental_model.intercept(), 0.0, 1e-12);
-    EXPECT_EQ(incremental_model.n_observations(), 3U);
-}
-
-
-TEST(LinearRegressionRankOneUpdate, MatchesRefitWithIntercept)
-{
-    hdos::LinearRegressionOptions options;
-    options.fit_intercept = true;
-
-    hdos::LinearRegression incremental_model(1, options);
-    hdos::LinearRegression refitted_model(1, options);
-
-    // Initial data:
-    //
-    // x = [0,1]
-    // y = [1,3]
-    const std::vector<double> initial_X{
-        0.0, 1.0
+    const std::vector<double> X{
+        1.0,
+        std::numeric_limits<double>::quiet_NaN()
     };
 
-    const std::vector<double> initial_y{
-        1.0, 3.0
-    };
-
-    incremental_model.fit(initial_X, initial_y);
-
-    // Force the initial lazy solve.
-    const auto& initial_coefficients =
-        incremental_model.coefficients();
-
-    ASSERT_EQ(initial_coefficients.size(), 1U);
-    EXPECT_NEAR(initial_coefficients[0], 2.0, 1e-12);
-    EXPECT_NEAR(incremental_model.intercept(), 1.0, 1e-12);
-
-    // Add x = 2, y = 10.
-    const std::vector<double> new_x{
+    const std::vector<double> y{
+        1.0,
         2.0
     };
 
-    incremental_model.rk1_update(new_x, 10.0);
-
-    const std::vector<double> complete_X{
-        0.0, 1.0, 2.0
-    };
-
-    const std::vector<double> complete_y{
-        1.0, 3.0, 10.0
-    };
-
-    refitted_model.fit(complete_X, complete_y);
-
-    const auto& incremental_coefficients =
-        incremental_model.coefficients();
-
-    const auto& refitted_coefficients =
-        refitted_model.coefficients();
-
-    ASSERT_EQ(incremental_coefficients.size(), 1U);
-    ASSERT_EQ(refitted_coefficients.size(), 1U);
-
-    // The exact least-squares solution is:
-    //
-    // slope     = 9/2
-    // intercept = 1/6
-    EXPECT_NEAR(
-        incremental_coefficients[0],
-        4.5,
-        1e-12
+    EXPECT_THROW(
+        model.fit(X, y),
+        std::invalid_argument
     );
-
-    EXPECT_NEAR(
-        incremental_model.intercept(),
-        1.0 / 6.0,
-        1e-12
-    );
-
-    EXPECT_NEAR(
-        incremental_coefficients[0],
-        refitted_coefficients[0],
-        1e-12
-    );
-
-    EXPECT_NEAR(
-        incremental_model.intercept(),
-        refitted_model.intercept(),
-        1e-12
-    );
-
-    EXPECT_EQ(incremental_model.n_observations(), 3U);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-TEST(LinearRegressionBatchUpdate, MatchesSequentialRankOneUpdates)
+TEST_P(LinearRegressionSolverTest, FitRejectsInfiniteFeature)
 {
-    hdos::LinearRegressionOptions options;
-    options.fit_intercept = false;
+    const auto solver = GetParam();
 
-    hdos::LinearRegression sequential_model(2, options);
-    hdos::LinearRegression batch_model(2, options);
-    hdos::LinearRegression refitted_model(2, options);
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
 
-    const std::vector<double> initial_X{
-        1.0, 0.0,
-        0.0, 1.0
+    const std::vector<double> X{
+        1.0,
+        std::numeric_limits<double>::infinity()
     };
 
-    const std::vector<double> initial_y{
-        1.0, 2.0
+    const std::vector<double> y{
+        1.0,
+        2.0
     };
 
-    sequential_model.fit(initial_X, initial_y);
-    batch_model.fit(initial_X, initial_y);
-
-    const std::vector<double> x1{
-        1.0, 1.0
-    };
-
-    const std::vector<double> x2{
-        2.0, -1.0
-    };
-
-    sequential_model.rk1_update(x1, 6.0);
-    sequential_model.rk1_update(x2, 0.0);
-
-    // Two observations stored column-major:
-    //
-    // [1   1]
-    // [2  -1]
-    const std::vector<double> batch_X{
-        1.0, 2.0,
-        1.0, -1.0
-    };
-
-    const std::vector<double> batch_y{
-        6.0, 0.0
-    };
-
-    batch_model.batch_update(batch_X, batch_y);
-
-    // All four observations stored column-major.
-    const std::vector<double> complete_X{
-        1.0, 0.0, 1.0, 2.0,
-        0.0, 1.0, 1.0, -1.0
-    };
-
-    const std::vector<double> complete_y{
-        1.0, 2.0, 6.0, 0.0
-    };
-
-    refitted_model.fit(complete_X, complete_y);
-
-    const auto& sequential_coefficients =
-        sequential_model.coefficients();
-
-    const auto& batch_coefficients =
-        batch_model.coefficients();
-
-    const auto& refitted_coefficients =
-        refitted_model.coefficients();
-
-    ASSERT_EQ(sequential_coefficients.size(), 2U);
-    ASSERT_EQ(batch_coefficients.size(), 2U);
-    ASSERT_EQ(refitted_coefficients.size(), 2U);
-
-    // Exact solution:
-    //
-    // beta_1 = 29/17
-    // beta_2 = 55/17
-    const std::vector<double> expected{
-        29.0 / 17.0,
-        55.0 / 17.0
-    };
-
-    for (std::size_t i = 0; i < 2; ++i) {
-        EXPECT_NEAR(
-            sequential_coefficients[i],
-            expected[i],
-            1e-12
-        );
-
-        EXPECT_NEAR(
-            batch_coefficients[i],
-            expected[i],
-            1e-12
-        );
-
-        EXPECT_NEAR(
-            refitted_coefficients[i],
-            expected[i],
-            1e-12
-        );
-
-        EXPECT_NEAR(
-            sequential_coefficients[i],
-            batch_coefficients[i],
-            1e-12
-        );
-    }
-
-    EXPECT_EQ(sequential_model.n_observations(), 4U);
-    EXPECT_EQ(batch_model.n_observations(), 4U);
-    EXPECT_EQ(refitted_model.n_observations(), 4U);
+    EXPECT_THROW(
+        model.fit(X, y),
+        std::invalid_argument
+    );
 }
+
+TEST_P(LinearRegressionSolverTest, FitRejectsNanResponse)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
+
+    const std::vector<double> X{
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> y{
+        1.0,
+        std::numeric_limits<double>::quiet_NaN()
+    };
+
+    EXPECT_THROW(
+        model.fit(X, y),
+        std::invalid_argument
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, FitRejectsInfiniteResponse)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
+
+    const std::vector<double> X{
+        1.0,
+        2.0
+    };
+
+    const std::vector<double> y{
+        1.0,
+        std::numeric_limits<double>::infinity()
+    };
+
+    EXPECT_THROW(
+        model.fit(X, y),
+        std::invalid_argument
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, RankOneUpdateRejectsWrongDimension)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    const std::array<double, 1> x{1.0};
+
+    EXPECT_THROW(
+        model.rk1_update(x, 1.0),
+        std::invalid_argument
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, RankOneUpdateRejectsNanFeature)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    const std::array<double, 2> x{
+        1.0,
+        std::numeric_limits<double>::quiet_NaN()
+    };
+
+    EXPECT_THROW(
+        model.rk1_update(x, 1.0),
+        std::invalid_argument
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, RankOneUpdateRejectsInfiniteResponse)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    const std::array<double, 2> x{
+        1.0,
+        2.0
+    };
+
+    EXPECT_THROW(
+        model.rk1_update(
+            x,
+            std::numeric_limits<double>::infinity()
+        ),
+        std::invalid_argument
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, BatchUpdateRejectsEmptyResponse)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    const std::vector<double> X;
+    const std::vector<double> y;
+
+    EXPECT_THROW(
+        model.batch_update(X, y),
+        std::invalid_argument
+    );
+}
+
+TEST_P(
+    LinearRegressionSolverTest,
+    BatchUpdateRejectsIncompatibleDimensions
+)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    const std::vector<double> X{
+        1.0,
+        2.0,
+        3.0
+    };
+
+    const std::vector<double> y{
+        1.0,
+        2.0
+    };
+
+    EXPECT_THROW(
+        model.batch_update(X, y),
+        std::invalid_argument
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, PredictRejectsWrongDimension)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    const std::vector<double> X = to_column_major({
+        {0.0, 0.0},
+        {1.0, 0.0},
+        {0.0, 1.0}
+    });
+
+    const std::vector<double> y{
+        1.0,
+        2.0,
+        3.0
+    };
+
+    model.fit(X, y);
+
+    const std::array<double, 1> input{1.0};
+
+    EXPECT_THROW(
+        model.predict(input),
+        std::invalid_argument
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, PredictRejectsNonFiniteInput)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        1,
+        make_options(solver)
+    );
+
+    const std::vector<double> X{
+        0.0,
+        1.0
+    };
+
+    const std::vector<double> y{
+        1.0,
+        2.0
+    };
+
+    model.fit(X, y);
+
+    const std::array<double, 1> input{
+        std::numeric_limits<double>::quiet_NaN()
+    };
+
+    EXPECT_THROW(
+        model.predict(input),
+        std::invalid_argument
+    );
+}
+
+TEST_P(LinearRegressionSolverTest, AccessorsRejectUnfittedModel)
+{
+    const auto solver = GetParam();
+
+    LinearRegression model(
+        2,
+        make_options(solver)
+    );
+
+    EXPECT_THROW(
+        model.coefficients(),
+        std::logic_error
+    );
+
+    EXPECT_THROW(
+        model.intercept(),
+        std::logic_error
+    );
+
+    const std::array<double, 2> input{
+        1.0,
+        2.0
+    };
+
+    EXPECT_THROW(
+        model.predict(input),
+        std::logic_error
+    );
+}
+
+} // namespace
