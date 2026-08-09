@@ -36,6 +36,7 @@ option(
 
 add_library(
     hdos
+    STATIC
     src/cholesky.cpp
     src/linear_regression.cpp
     src/online_moments.cpp
@@ -135,6 +136,7 @@ endif()
 # Installation
 # ------------------------------------------------------------------
 
+
 set(
     HDOS_INSTALL_CMAKEDIR
     "${CMAKE_INSTALL_LIBDIR}/cmake/hdos"
@@ -163,6 +165,14 @@ install(
     FILE hdosTargets.cmake
     NAMESPACE hdos::
     DESTINATION "${HDOS_INSTALL_CMAKEDIR}"
+)
+
+
+install(
+    FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    DESTINATION
+        "${CMAKE_INSTALL_DATADIR}/hdos"
 )
 
 configure_package_config_file(
