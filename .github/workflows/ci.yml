@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu GCC
+            os: ubuntu-latest
+            cxx: g++
+          - name: Ubuntu Clang
+            os: ubuntu-latest
+            cxx: clang++
+          - name: Windows MSVC
+            os: windows-latest
+            cxx: ""
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure HDOS
+        if: runner.os != 'Windows'
+        env:
+          CXX: ${{ matrix.cxx }}
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DHDOS_BUILD_TESTS=ON
+          -DHDOS_BUILD_EXAMPLES=ON
+          -DHDOS_ENABLE_WARNINGS=ON
+
+      - name: Configure HDOS
+        if: runner.os == 'Windows'
+        run: >
+          cmake -S . -B build
+          -DHDOS_BUILD_TESTS=ON
+          -DHDOS_BUILD_EXAMPLES=ON
+          -DHDOS_ENABLE_WARNINGS=ON
+
+      - name: Build HDOS
+        run: cmake --build build --config Release
+
+      - name: Run test suite
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Install HDOS
+        run: >
+          cmake --install build
+          --config Release
+          --prefix "${{ github.workspace }}/install"
+
+      - name: Configure installed-package consumer
+        run: >
+          cmake -S tests/consumer -B consumer-build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install"
+
+      - name: Build installed-package consumer
+        run: cmake --build consumer-build --config Release
+
+      - name: Run installed-package consumer
+        run: >
+          ctest --test-dir consumer-build
+          -C Release
+          --output-on-failure
+
+  sanitizers:
+    name: Ubuntu GCC sanitizers
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      CXX: g++
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure HDOS
+        run: >
+          cmake -S . -B build-sanitized
+          -DCMAKE_BUILD_TYPE=Debug
+          -DHDOS_BUILD_TESTS=ON
+          -DHDOS_BUILD_EXAMPLES=ON
+          -DHDOS_ENABLE_WARNINGS=ON
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build HDOS
+        run: cmake --build build-sanitized
+
+      - name: Run test suite
+        run: >
+          ctest --test-dir build-sanitized
+          --output-on-failure
+
