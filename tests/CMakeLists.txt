@@ -20,7 +20,7 @@ add_executable(
 target_link_libraries(
     hdos_tests
     PRIVATE
-        hdos
+        hdos::hdos
         GTest::gtest_main
 )
 
