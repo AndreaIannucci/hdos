@@ -10,7 +10,6 @@ add_library(
     src/pca.cpp
     src/matrix_invert.cpp
     src/matrix_operations.cpp
-    src/mat_print.cpp
     src/stable_norm.cpp
     src/triangular_solver.cpp
     src/householder.cpp
@@ -24,6 +23,39 @@ target_compile_features(
     PUBLIC
         cxx_std_20
 )
+
+set_target_properties(
+    hdos
+    PROPERTIES
+        CXX_EXTENSIONS OFF
+)
+
+option(
+    HDOS_ENABLE_STRICT_WARNINGS
+    "Enable strict compiler warnings"
+    ON
+)
+
+if(HDOS_ENABLE_STRICT_WARNINGS)
+    if(MSVC)
+        target_compile_options(
+            hdos
+            PRIVATE
+                /W4
+        )
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(
+            hdos
+            PRIVATE
+                -Wall
+                -Wextra
+                -Wpedantic
+                -Wconversion
+                -Wsign-conversion
+                -Wshadow
+        )
+    endif()
+endif()
 
 target_include_directories(
     hdos
