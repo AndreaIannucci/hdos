@@ -12,4 +12,9 @@ std::vector<double> upper_triangular_solver(
     const std::vector<double>& L,
     const std::vector<double>& b
 );
+
+std::vector<double> lower_transpose_solver(
+    const std::vector<double>& L,
+    const std::vector<double>& b
+);
 }

@@ -8,7 +8,7 @@ using namespace std;
 
 namespace hdos::detail{
 // TODO infinite or nan elements
-double stable_norm(const std::vector<double>& x){
+double stable_norm(std::span<const double> x){
     double scale = 0.0;
     double ssq = 1.0;
 

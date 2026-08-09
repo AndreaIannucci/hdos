@@ -1,0 +1,11 @@
+/build*/
+/cmake-build-*/
+/install*/
+command.txt
+debug_cholesky.cpp
+/src/mat_print.cpp
+/src/detail/mat_print.hpp
+
+settings.json
+
+*.exe
