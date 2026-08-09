@@ -9,8 +9,13 @@ add_executable(
     # test_QR.cpp
     # test_qr_operations.cpp
     # test_jacobi_rotation.cpp
-    test_one_sided_jacobi.cpp
-)
+    # test_one_sided_jacobi.cpp
+    # test_wide_SVD.cpp
+    # test_pca.cpp
+    # test_pca_2.cpp
+    test_running_mean.cpp
+    test_running_variance.cpp
+    )
 
 target_link_libraries(
     hdos_tests

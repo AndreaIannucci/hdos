@@ -20,8 +20,8 @@ std::vector<double> QR_decomp(std::span<double> A, std::size_t rows, std::size_t
         "Invalid matrix dimensions");
 }
 
-    for (double entry : A) {
-    if (!std::isfinite(entry)) {
+    for (double value : A) {
+    if (!std::isfinite(value)) {
         throw std::invalid_argument(
             "The matrix must contain only finite entries");
     }

@@ -8,6 +8,7 @@
 #include <vector>
 
 namespace {
+constexpr double tol = 1e-10;
 
 void expect_orthonormal_columns(
     const std::vector<double>& A,
@@ -260,6 +261,34 @@ TEST(JacobiSVD, RejectsNonFiniteInput)
         hdos::detail::jacobi_svd(A, 2, 2),
         std::invalid_argument
     );
+}
+
+TEST(SVDTest, RankOneProportionalColumns)
+{
+    // Column-major:
+    //
+    // [-10  -2]
+    // [  0   0]
+    // [ 10   2]
+    std::vector<double> A{
+        -10.0, 0.0, 10.0,
+         -2.0, 0.0,  2.0
+    };
+
+    const auto svd =
+        hdos::detail::SVD(A, 3, 2);
+
+    ASSERT_EQ(svd.singular_values.size(), 2);
+
+    EXPECT_NEAR(
+        svd.singular_values[0],
+        std::sqrt(208.0),
+        tol);
+
+    EXPECT_NEAR(
+        svd.singular_values[1],
+        0.0,
+        tol);
 }
 
 

@@ -3,24 +3,37 @@
 #include<vector>
 #include<cstddef>
 #include<cmath>
+#include<stdexcept>
 
 
 namespace hdos::detail{
 
-    // Transpose matrix
+// Transpose matrix
 std::vector<double> transpose(
-    const std::vector<double>& M,
-    const std::size_t rows,
-    const std::size_t cols
-)
+    std::span<const double> M,
+    std::size_t rows,
+    std::size_t cols)
 {
-    std::vector<double> M_adj(rows * cols);
+    if (rows == 0 || cols == 0) {
+        throw std::invalid_argument(
+            "The matrix cannot have 0 rows or 0 columns");
+    }
 
-    for (std::size_t k = 0; k < rows; ++k) {
-        for (std::size_t j = 0; j < cols; ++j) {
-            M_adj[k * cols + j] = M[k + j * rows];
+    if (M.size() != rows * cols) {
+        throw std::invalid_argument(
+            "Invalid matrix dimensions");
+    }
+
+    std::vector<double> M_T(rows * cols);
+
+    for (std::size_t col = 0; col < cols; ++col) {
+        for (std::size_t row = 0; row < rows; ++row) {
+
+            M_T[col + row * cols] =
+                M[row + col * rows];
         }
     }
-    return M_adj;
+
+    return M_T;
 }
 }

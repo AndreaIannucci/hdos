@@ -6,9 +6,11 @@
 #include <algorithm>
 #include <utility>
 
+#include "detail/matrix_operations.hpp"
 #include "detail/one_sided_jacobi.hpp"
 #include "detail/stable_norm.hpp"
 #include "detail/jacobi_rotation.hpp"
+#include "detail/QR.hpp"
 
 namespace hdos::detail{
 SVDResult jacobi_svd(
@@ -30,9 +32,10 @@ SVDResult jacobi_svd(
         throw std::invalid_argument("Matrix cannot have rows < cols");
         }
 
-    for (std::size_t k =0; k < A.size(); ++k){
-        if (!std::isfinite(A[k])){
-            throw std::invalid_argument("No entry can be nan or infty");
+    for (double value : A) {
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument(
+                "The matrix must contain only finite entries");
         }
     }
 
@@ -61,11 +64,19 @@ SVDResult jacobi_svd(
                 double norm_x = detail::stable_norm(x);
                 double norm_y = detail::stable_norm(y);
 
-                if (norm_x == 0 or norm_y == 0){
+                const double scale = std::max(norm_x, norm_y);
+
+                // Both columns are exactly zero.
+                if (scale == 0.0) {
+                    continue;
+                }
+
+                // If one column is negligible relative to the other,
+                // treat it as a numerical null direction.
+                if (std::min(norm_x, norm_y) <= tolerance * scale) {
                     continue;
                 }
                 
-                double scale = std::max(norm_x, norm_y);
 
                 double scaled_norm_x = norm_x / scale;
                 double scaled_norm_y = norm_y / scale;
@@ -148,20 +159,154 @@ SVDResult jacobi_svd(
         std::swap( V[i + j * cols], V[i + largest * cols]);
         }
     }
-    for (std::size_t j = 0; j < cols; ++j){
+    const double rank_tol =
+    tolerance * singular_values[0];
 
-        double sigma = singular_values[j];
+    std::vector<double> candidate(rows);
+    std::vector<double> best_candidate(rows);
 
-        if (sigma == 0){
+    for (std::size_t j = 0; j < cols; ++j) {
+
+        const double sigma = singular_values[j];
+
+        // Normal singular direction.
+        if (sigma > rank_tol) {
+            for (std::size_t i = 0; i < rows; ++i) {
+                B[i + j * rows] /= sigma;
+            }
+
             continue;
         }
 
-        for (std::size_t i = 0; i < rows; ++i){
-            B[i + j * rows] /= sigma;
+        // Numerically zero singular value.
+        singular_values[j] = 0.0;
+
+        double best_norm = 0.0;
+
+        // Find a standard basis vector whose projection onto
+        // the orthogonal complement of the previous columns
+        // has sufficiently large norm.
+        for (std::size_t basis = 0; basis < rows; ++basis) {
+
+            std::fill(candidate.begin(), candidate.end(), 0.0);
+            candidate[basis] = 1.0;
+
+            // Two passes of modified Gram-Schmidt for stability.
+            for (std::size_t pass = 0; pass < 2; ++pass) {
+
+                for (std::size_t k = 0; k < j; ++k) {
+
+                    double dot = 0.0;
+
+                    for (std::size_t i = 0; i < rows; ++i) {
+                        dot +=
+                            B[i + k * rows] *
+                            candidate[i];
+                    }
+
+                    for (std::size_t i = 0; i < rows; ++i) {
+                        candidate[i] -=
+                            dot * B[i + k * rows];
+                    }
+                }
+            }
+
+            const double candidate_norm =
+                detail::stable_norm(
+                    std::span<const double>(
+                        candidate.data(),
+                        candidate.size()));
+
+            if (candidate_norm > best_norm) {
+                best_norm = candidate_norm;
+                best_candidate = candidate;
+            }
+        }
+
+        if (best_norm <=
+            10.0 * std::numeric_limits<double>::epsilon()) {
+            throw std::runtime_error(
+                "Failed to construct orthonormal basis in SVD");
+        }
+
+        // Store the new unit vector as column j of U.
+        for (std::size_t i = 0; i < rows; ++i) {
+            B[i + j * rows] =
+                best_candidate[i] / best_norm;
         }
     }
     std::vector<double> U = std::move(B);
 
     return SVDResult{std::move(U), std::move(singular_values), std::move(V)};
 }
+
+SVDResult SVD(std::span<const double> A,
+              std::size_t rows,
+              std::size_t cols,
+              double tol_const,
+              std::size_t max_sweeps){
+            
+            if (rows >= cols){
+                return jacobi_svd(
+                    A,
+                    rows,
+                    cols,
+                    tol_const,
+                    max_sweeps);}
+                
+            
+            for (double value : A) {
+                if (!std::isfinite(value)) {
+                    throw std::invalid_argument(
+                        "The matrix must contain only finite entries");
+                }
+            }
+
+            std::vector<double> At = detail::transpose(A, rows, cols);
+            std::vector<double> tau =  QR_decomp(At, cols, rows);
+            std::vector<double> R(rows*rows, 0.0);
+
+            for (std::size_t j = 0; j < rows; ++j){
+                for( std::size_t i = 0; i <= j; ++i){
+                    R[i + j*rows] = At[i + j*cols];
+                }
+            }
+
+            SVDResult svd_R = jacobi_svd(R, rows, rows, tol_const, max_sweeps);
+            std::vector<double> U_A = svd_R.V;
+            std::vector<double> singular_values = svd_R.singular_values;
+
+            std::vector<double> W(rows*cols, 0.0);
+            for (std::size_t j = 0; j < rows; ++j){
+                for (std::size_t i = 0; i < rows; ++i){
+                    W[i + j*cols] = svd_R.U[i + j *rows];
+                }
+            }
+
+            for (std::size_t k = rows; k-- > 0;) {
+
+                // Apply H_k to every column of W
+                for (std::size_t j = 0; j < rows; ++j) {
+
+                    // dot = v_k^T W[:, j]
+                    double dot = W[j * cols + k];
+
+                    for (std::size_t i = k + 1; i < cols; ++i) {
+                        dot += At[k * cols + i] * W[j * cols + i];
+                    }
+
+                    // W[:,j] -= tau[k] * v_k * dot
+                    const double scale = tau[k] * dot;
+
+                    W[j * cols + k] -= scale;
+
+                    for (std::size_t i = k + 1; i < cols; ++i) {
+                        W[j * cols + i] -= scale * At[k * cols + i];
+                    }
+                }
+            }
+
+            return SVDResult{U_A, singular_values, W};
+        }
+
 }

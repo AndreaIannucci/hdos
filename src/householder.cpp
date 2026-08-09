@@ -15,8 +15,8 @@ double householder_reflector(std::span<double> x){
         throw std::invalid_argument("Invalid input");
     }
 
-    for (double entry : x){
-        if (! std::isfinite(entry)){
+    for (double value : x){
+        if (! std::isfinite(value)){
             throw std::invalid_argument("No entry can be nan or infty");
         }
     }

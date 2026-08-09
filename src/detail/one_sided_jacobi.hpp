@@ -16,4 +16,10 @@ SVDResult jacobi_svd(
     std::size_t cols,
     double tol_const = 10,
     std::size_t max_sweeps = 100);
+
+SVDResult SVD(std::span<const double> A,
+            std::size_t rows,
+            std::size_t cols,
+            double tol_const = 10,
+            std::size_t max_sweeps = 100);
 }

@@ -6,6 +6,8 @@ add_library(
     hdos
     src/cholesky.cpp
     src/linear_regression.cpp
+    src/online_moments.cpp
+    src/pca.cpp
     src/matrix_invert.cpp
     src/matrix_operations.cpp
     src/mat_print.cpp
