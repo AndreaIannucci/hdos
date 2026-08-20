@@ -92,8 +92,10 @@ public:
     std::span<const double> mean() const noexcept;
 
     /// Return the current unbiased sample variances.
+    // ddof = 1: sample covariance
+    // ddof = 0: population covariance
     [[nodiscard]]
-    std::span<const double> variance() const noexcept;
+    std::span<const double> variance() noexcept;
 
     /// Return the observation dimension.
     [[nodiscard]]
@@ -113,6 +115,39 @@ private:
     std::vector<double> mean_;
     std::vector<double> M2_;
     std::vector<double> variance_;
+    bool is_current = false;
+};
+
+class RunningCovariance {
+public:
+    explicit RunningCovariance(std::size_t n_features);
+
+    void update(std::span<const double> x);
+    void batch_update(std::span<const double> X);
+
+    /// Return the observation dimension.
+    [[nodiscard]]
+    std::size_t n_features() const noexcept;
+
+    /// Return the number of accumulated observations.
+    [[nodiscard]]
+    std::size_t n_observations() const noexcept;
+    [[nodiscard]] std::span<const double> mean() const noexcept;
+
+    // ddof = 1: sample covariance
+    // ddof = 0: population covariance
+    [[nodiscard]] std::span<const double> covariance() noexcept;
+
+    void reset();
+
+private:
+    std::size_t n_features_;
+    std::size_t n_observations_;
+
+    std::vector<double> mean_;
+    std::vector<double> M2_;
+    std::vector<double> covariance_;
+    bool is_current = false;
 };
 
 } 
