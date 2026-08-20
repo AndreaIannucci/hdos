@@ -55,7 +55,8 @@ int main()
         return fail("Linear regression smoke test failed");
     }
 
-    hdos::RunningVariance moments(2);
+        hdos::RunningVariance variances(2);
+    hdos::RunningCovariance covariances(2);
 
     const std::array<double, 2> first{
         1.0,
@@ -72,17 +73,29 @@ int main()
         30.0
     };
 
-    moments.update(first);
-    moments.update(second);
-    moments.update(third);
+    variances.update(first);
+    variances.update(second);
+    variances.update(third);
 
-    const auto mean = moments.mean();
-    const auto variance = moments.variance();
+    covariances.update(first);
+    covariances.update(second);
+    covariances.update(third);
 
-    if (!near(mean[0], 2.0) ||
+    const auto mean = variances.mean();
+    const auto variance = variances.variance();
+    const auto covariance = covariances.covariance();
+
+    if (mean.size() != 2 ||
+        variance.size() != 2 ||
+        covariance.size() != 4 ||
+        !near(mean[0], 2.0) ||
         !near(mean[1], 20.0) ||
         !near(variance[0], 1.0) ||
-        !near(variance[1], 100.0)) {
+        !near(variance[1], 100.0) ||
+        !near(covariance[0], 1.0) ||
+        !near(covariance[1], 10.0) ||
+        !near(covariance[2], 10.0) ||
+        !near(covariance[3], 100.0)) {
         return fail("Online moments smoke test failed");
     }
 

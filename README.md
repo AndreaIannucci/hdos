@@ -1,9 +1,9 @@
 # HDOS
 
-HDOS is a small, dependency-free C++20 library for batch and online
-numerical statistics. It provides focused implementations of common
-estimators that can be fitted from a complete dataset and, where supported,
-updated as new observations arrive.
+HDOS is a small, dependency-free C++20 library for batch and online numerical
+statistics. It provides focused implementations of common estimators that can
+be fitted from a complete dataset and, where supported, updated as new
+observations arrive.
 
 The project exists to make the numerical behaviour of these algorithms
 explicit while keeping the public API and build system compact. HDOS is not
@@ -19,18 +19,19 @@ intended to replace a full linear-algebra or machine-learning framework.
 | `LinearRegression` | Batch fitting, rank-one and batch updates, optional intercept, ridge regularisation, Cholesky and SVD solvers, prediction, and numerically stable training R-squared |
 | `RunningMean` | Numerically stable element-wise means for vector observations, with single-observation and batch updates |
 | `RunningVariance` | Numerically stable element-wise means and unbiased sample variances, with single-observation and batch updates |
+| `RunningCovariance` | Numerically stable vector means and unbiased sample covariance matrices, with single-observation and batch updates |
 | `PCA` | Centred batch PCA, fixed-rank incremental updates, batch updates, singular values, and explained variances |
 
-HDOS also contains the Cholesky, QR, Householder, Jacobi rotation, and
-one-sided Jacobi SVD routines used by these algorithms. They are implementation
-details rather than part of the public API.
+HDOS also contains the Cholesky, QR, Householder, Jacobi rotation, and one-sided
+Jacobi SVD routines used by these algorithms. They are implementation details
+rather than part of the public API.
 
 ## Requirements
 
 - A C++20 compiler.
 - CMake 3.20 or newer.
-- Git and an internet connection when configuring the tests for the first
-  time, because CMake fetches GoogleTest 1.17.0.
+- Git and an internet connection when configuring the tests for the first time,
+  because CMake fetches GoogleTest 1.17.0.
 
 The library itself has no third-party runtime dependencies.
 
@@ -126,7 +127,6 @@ After installation, a consumer can import the namespaced target:
 
 ```cmake
 cmake_minimum_required(VERSION 3.20)
-
 project(hdos_consumer LANGUAGES CXX)
 
 find_package(hdos 0.1 CONFIG REQUIRED)
@@ -175,6 +175,31 @@ const auto variance = moments.variance();
 ```
 
 `mean` is `[2, 20]` and `variance` is `[1, 100]`.
+
+### Online mean and sample covariance
+
+```cpp
+#include <hdos/hdos.hpp>
+
+#include <array>
+
+hdos::RunningCovariance moments(2);
+
+moments.update(std::array<double, 2>{1.0, 10.0});
+moments.update(std::array<double, 2>{2.0, 20.0});
+moments.update(std::array<double, 2>{3.0, 30.0});
+
+const auto mean = moments.mean();
+const auto covariance = moments.covariance();
+```
+
+`mean` is `[2, 20]`. The covariance matrix is returned column-major as
+`[1, 10, 10, 100]`, representing
+
+```text
+[  1   10 ]
+[ 10  100 ]
+```
 
 ### Batch and incremental PCA
 
@@ -249,6 +274,20 @@ variance = M2 / (n - 1).
 The reported variance is zero until at least two observations have been
 accumulated.
 
+### Sample covariance
+
+`RunningCovariance` reports the unbiased sample covariance matrix:
+
+```text
+covariance = M2 / (n - 1).
+```
+
+The reported covariance matrix is zero until at least two observations have
+been accumulated. `covariance()` returns a column-major view of a lazily
+computed full symmetric matrix. The returned view is owned by the estimator;
+its contents may be updated after subsequent calls to `update()`,
+`batch_update()`, `reset()`, or `covariance()`.
+
 ### Ridge regularisation and the intercept
 
 For `l2_penalty = lambda`, linear regression minimises
@@ -257,8 +296,8 @@ For `l2_penalty = lambda`, linear regression minimises
 sum_i (y_i - intercept - x_i^T beta)^2 + lambda * ||beta||^2.
 ```
 
-Only the feature coefficients are penalised. The intercept is never
-penalised. The penalty must be finite and non-negative.
+Only the feature coefficients are penalised. The intercept is never penalised.
+The penalty must be finite and non-negative.
 
 ### Cholesky and SVD regression backends
 
@@ -278,6 +317,7 @@ Select a backend when constructing the model:
 ```cpp
 hdos::LinearRegressionOptions options;
 options.solver = hdos::LinearRegressionSolver::cholesky; // default
+
 // options.solver = hdos::LinearRegressionSolver::svd;
 ```
 
@@ -330,25 +370,21 @@ with `TSS` centred around the response mean even when `fit_intercept` is
 `false`. The ridge penalty is not included in `RSS`, and R-squared may be
 negative.
 
-For a constant response, HDOS returns `1` for a numerically perfect fit and
-`0` otherwise. Centred sufficient statistics are maintained to reduce
-catastrophic cancellation when features or responses have large offsets.
+For a constant response, HDOS returns `1` for a numerically perfect fit and `0`
+otherwise. Centred sufficient statistics are maintained to reduce catastrophic
+cancellation when features or responses have large offsets.
 
 ## Current limitations
 
-- The public API currently supports dense `double` data only.
 - Matrices must be supplied as contiguous column-major buffers.
-- Missing values, NaNs, and infinities are rejected rather than imputed.
 - The implementations are single-threaded and do not explicitly use SIMD, a
   BLAS, a GPU, or another external acceleration backend.
-- No performance claims are made yet; comparative benchmarks are planned
-  after `v0.1.0`.
+- No performance claims are made yet; comparative benchmarks are planned after
+  `v0.1.0`.
 - Incremental PCA retains only the requested number of components. When
   `n_components < n_features`, discarded directions are not recoverable, so
   sequential updates need not equal a complete batch refit.
 - PCA does not yet provide `transform()` or `inverse_transform()` helpers.
-- Regression currently has no observation weights, multi-output response,
-  inference statistics, or model serialisation.
 - HDOS does not yet promise a stable ABI or shared-library compatibility.
 - The API is not designed for concurrent mutation of the same estimator.
 
