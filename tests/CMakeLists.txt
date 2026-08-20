@@ -15,6 +15,7 @@ add_executable(
     test_pca_2.cpp
     test_running_mean.cpp
     test_running_variance.cpp
+    test_running_covariance.cpp
     )
 
 target_link_libraries(
